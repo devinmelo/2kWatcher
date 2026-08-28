@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# Local data and footage: never commit these.
+data/
+captures/
+*.db
+*.mp4
+*.mkv
+config/regions.yaml

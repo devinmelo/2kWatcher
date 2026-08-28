@@ -1,0 +1,39 @@
+# 2kWatcher region config.
+#
+# All coordinates are NORMALIZED (0.0 - 1.0) fractions of the frame, so the same
+# file works at 720p / 1080p / 1440p.
+#
+# THE VALUES BELOW ARE PLACEHOLDERS. 2K moves its HUD every year, so they must
+# be calibrated against your own capture before anything downstream will work:
+#
+#     2kw calibrate --source virtualcam --region scoreboard
+#
+# ...which lets you drag a box on a live frame and writes it to config/regions.yaml.
+
+capture:
+  # OpenCV device index of the OBS virtual camera. `2kw devices` lists candidates.
+  device_index: 0
+  # Fall back to a recorded file instead of live capture (handy for offline dev).
+  video_path: null
+  # How often the HUD is sampled. The capture card runs at 60; we do not need to.
+  sample_fps: 10
+
+regions:
+  # The whole scoreboard bug. Used as the primary "are we in a live game?" signal.
+  scoreboard:   {x: 0.355, y: 0.035, w: 0.290, h: 0.075}
+
+  # Individual fields inside the scoreboard, cropped separately for parsing.
+  score_home:   {x: 0.428, y: 0.045, w: 0.048, h: 0.045}
+  score_away:   {x: 0.524, y: 0.045, w: 0.048, h: 0.045}
+  game_clock:   {x: 0.470, y: 0.088, w: 0.060, h: 0.032}
+  quarter:      {x: 0.370, y: 0.088, w: 0.045, h: 0.032}
+  shot_clock:   {x: 0.483, y: 0.130, w: 0.034, h: 0.034}
+
+  # Where the "Excellent / Slightly Early / Slightly Late" release text appears.
+  shot_feedback: {x: 0.400, y: 0.760, w: 0.200, h: 0.060}
+
+  # MyCareer / Rec teammate grade.
+  teammate_grade: {x: 0.055, y: 0.880, w: 0.060, h: 0.050}
+
+  # Full-frame region for post-game box score capture. Parsed as one screenshot.
+  box_score:    {x: 0.000, y: 0.000, w: 1.000, h: 1.000}
