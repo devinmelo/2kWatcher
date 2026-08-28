@@ -39,6 +39,8 @@ class LiveState:
         self._events: deque[dict] = deque(maxlen=MAX_EVENTS)
         self._previews: dict[str, str] = {}
         self._preview_size: tuple[int, int] = (0, 0)
+        self._full_frame: str | None = None
+        self.collected: dict[str, int] = {}
 
     # --- writes, from the watcher thread ---------------------------------
 
@@ -77,9 +79,24 @@ class LiveState:
             if ok:
                 import base64
                 encoded[name] = base64.b64encode(buf.tobytes()).decode("ascii")
+        # A downscaled copy of the whole frame, so regions can be drawn on it
+        # in the UI without shipping a full 1080p image ten times a second.
+        full = event.data.get("frame")
+        full_encoded = None
+        if full is not None and full.size:
+            scale = 960.0 / max(full.shape[1], 1)
+            small = cv2.resize(full, None, fx=scale, fy=scale,
+                               interpolation=cv2.INTER_AREA) if scale < 1 else full
+            ok, buf = cv2.imencode(".jpg", small, [cv2.IMWRITE_JPEG_QUALITY, 70])
+            if ok:
+                import base64
+                full_encoded = base64.b64encode(buf.tobytes()).decode("ascii")
+
         with self._lock:
             self._previews = encoded
             self._preview_size = event.data.get("frame_size", (0, 0))
+            if full_encoded is not None:
+                self._full_frame = full_encoded
 
     def note(self, kind: str, message: str) -> None:
         """Record something worth showing that did not come off the bus."""
@@ -88,6 +105,14 @@ class LiveState:
                 "kind": kind, "message": message,
                 "at": time.strftime("%H:%M:%S"), "frame": None,
             })
+
+    def set_collected(self, counts: dict[str, int]) -> None:
+        with self._lock:
+            self.collected = dict(counts)
+
+    def full_frame(self) -> str | None:
+        with self._lock:
+            return self._full_frame
 
     def set_progress(self, seen: int, sampled: int) -> None:
         with self._lock:
@@ -127,4 +152,6 @@ class LiveState:
                 "events": list(self._events)[:60],
                 "previews": dict(self._previews),
                 "frame_size": list(self._preview_size),
+                "collected": dict(self.collected),
+                "collected_total": sum(self.collected.values()),
             }

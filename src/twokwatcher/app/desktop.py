@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import webbrowser
+from pathlib import Path
 
 from ..config import Config
 from .server import AppServer
@@ -21,8 +22,11 @@ log = logging.getLogger(__name__)
 
 
 def launch(config: Config, db_path, *, port: int = 8770,
-           window: bool = True) -> int:
-    app = AppServer(config, db_path, port=port)
+           window: bool = True, config_path=None,
+           collect_dir="data/collect", collect: bool = True) -> int:
+    app = AppServer(config, db_path, port=port, config_path=config_path)
+    app.watcher.collector.out_dir = Path(collect_dir)
+    app.watcher.collector.enabled = collect
     app.start_background()
     print(f"2kWatcher is serving at {app.url}")
 
@@ -40,7 +44,9 @@ def launch(config: Config, db_path, *, port: int = 8770,
     except ImportError:
         print("pywebview is not installed — opening in your browser instead.")
         print("For the standalone window:  pip install pywebview")
-        return launch(config, db_path, port=port, window=False)
+        return launch(config, db_path, port=port, window=False,
+                      config_path=config_path, collect_dir=collect_dir,
+                      collect=collect)
 
     webview.create_window("2kWatcher", app.url, width=1180, height=780,
                           min_size=(820, 560))

@@ -213,12 +213,23 @@ def cmd_run(args) -> int:
     return 0
 
 
+def cmd_doctor(args) -> int:
+    """Check the setup before a session, rather than during one."""
+    from .doctor import format_report, run_checks
+
+    report, blocking = format_report(run_checks(args.config, args.db))
+    print(report)
+    return 1 if blocking else 0
+
+
 def cmd_app(args) -> int:
     """Open the desktop app."""
     from .app.desktop import launch
 
     return launch(Config.load(args.config), args.db, port=args.port,
-                  window=not args.browser)
+                  window=not args.browser,
+                  config_path=args.config or DEFAULT_CONFIG_PATH,
+                  collect_dir=args.collect_dir, collect=not args.no_collect)
 
 
 def cmd_roster(args) -> int:
@@ -294,11 +305,18 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--limit", type=int, default=0, help="stop after N samples")
     p.set_defaults(func=cmd_run)
 
+    sub.add_parser("doctor", parents=[common],
+                   help="check the setup before a session").set_defaults(
+        func=cmd_doctor)
+
     p = sub.add_parser("app", parents=[common],
                        help="open the desktop app (default way to use this)")
     p.add_argument("--port", type=int, default=8770)
     p.add_argument("--browser", action="store_true",
                    help="open in your browser instead of a native window")
+    p.add_argument("--collect-dir", type=Path, default=Path("data/collect"))
+    p.add_argument("--no-collect", action="store_true",
+                   help="do not save frames for calibration")
     p.set_defaults(func=cmd_app)
 
     p = sub.add_parser("roster", parents=[common], help="show or edit the player registry")

@@ -76,6 +76,25 @@
   .empty { color: var(--dim); font-style: italic; padding: 6px 0; }
   .banner { padding: 9px 14px; background: #2d1618; color: #ffb4ae; border-bottom: 1px solid var(--bad); font-size: 13px; }
   .hint { color: var(--dim); font-size: 12px; margin-top: 9px; }
+
+  .calwrap { position: relative; display: inline-block; max-width: 100%; user-select: none; }
+  .calwrap img { display: block; max-width: 100%; border-radius: 6px; }
+  .calwrap .box {
+    position: absolute; border: 2px solid var(--accent);
+    background: rgba(79,156,249,.14); pointer-events: none; border-radius: 2px;
+  }
+  .calwrap .box span {
+    position: absolute; top: -17px; left: 0; font-size: 10px;
+    font-family: var(--mono); color: var(--accent); white-space: nowrap;
+  }
+  .calwrap .box.drawing { border-color: var(--live); background: rgba(63,185,80,.16); }
+  .calbar { display: flex; gap: 9px; align-items: center; flex-wrap: wrap; margin-bottom: 11px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .chip {
+    font-family: var(--mono); font-size: 11px; padding: 3px 8px;
+    border: 1px solid var(--line); border-radius: 20px; color: var(--dim);
+  }
+  .chip.set { color: var(--live); border-color: #23502f; }
 </style>
 </head>
 <body>
@@ -109,9 +128,36 @@
         <div class="stat"><div class="k">Frames seen</div><div class="v" id="seen">0</div></div>
         <div class="stat"><div class="k">Sampled</div><div class="v" id="sampled">0</div></div>
         <div class="stat"><div class="k">In state</div><div class="v" id="dwell">0s</div></div>
+        <div class="stat"><div class="k">Frames collected</div><div class="v" id="collected">0</div></div>
+      </div>
+      <div class="body" style="padding-top:0">
+        <div class="chips" id="collectchips"></div>
+        <div class="hint">
+          Frames are saved automatically to <code>data/collect/</code>, sorted by
+          screen. Play normally and you finish the night with a labelled set —
+          that is what the parsers get built from.
+        </div>
       </div>
     </section>
   </div>
+
+  <section style="grid-column:1/-1">
+    <h2>Calibrate regions</h2>
+    <div class="body">
+      <div class="calbar">
+        <select id="regionpick"></select>
+        <button id="grab">Grab frame</button>
+        <span class="hint" style="margin:0">Drag a box on the frame, then Save.</span>
+        <div class="spacer"></div>
+        <button id="savebox" class="primary" disabled>Save region</button>
+      </div>
+      <div class="calwrap" id="calwrap">
+        <img id="calimg" alt="" style="display:none">
+        <div class="empty" id="calempty">Grab a frame with 2K on screen to start.</div>
+      </div>
+      <div class="chips" id="regionchips"></div>
+    </div>
+  </section>
 
   <section>
     <h2>Activity</h2>
@@ -215,6 +261,11 @@ async function poll() {
   if (s.error) { banner.style.display = 'block'; banner.textContent = s.error; }
   else banner.style.display = 'none';
 
+  $('collected').textContent = (s.collected_total || 0).toLocaleString();
+  $('collectchips').innerHTML = Object.entries(s.collected || {})
+    .sort((a, b) => b[1] - a[1])
+    .map(([k, v]) => `<span class="chip set">${k} ${v}</span>`).join('');
+
   if (s.events.length && s.events[0].frame !== null) lastFrame = s.events[0].frame;
   renderCrops(s.previews, s.scoreboard || {});
   renderLog(s.events);
@@ -237,6 +288,85 @@ $('toggle').onclick = async () => {
     : '<option value="">no devices found</option>';
 })();
 
+// ---- region editor -------------------------------------------------------
+const REGIONS = ['scoreboard','score_home','score_away','game_clock','quarter',
+                 'shot_clock','shot_feedback','teammate_grade','box_score'];
+let regions = {}, drawing = null, pending = null;
+
+$('regionpick').innerHTML = REGIONS.map(r => `<option>${r}</option>`).join('');
+
+async function loadRegions() {
+  const data = await api('/api/regions');
+  regions = data.regions || {};
+  $('regionchips').innerHTML = REGIONS.map(r =>
+    `<span class="chip ${regions[r] ? 'set' : ''}">${r}</span>`).join('');
+  drawBoxes();
+}
+
+function drawBoxes() {
+  const wrap = $('calwrap'), img = $('calimg');
+  wrap.querySelectorAll('.box').forEach(b => b.remove());
+  if (img.style.display === 'none') return;
+  const W = img.clientWidth, H = img.clientHeight;
+  const draw = (name, r, cls) => {
+    const el = document.createElement('div');
+    el.className = 'box' + (cls || '');
+    el.style.left = (r.x * W) + 'px'; el.style.top = (r.y * H) + 'px';
+    el.style.width = (r.w * W) + 'px'; el.style.height = (r.h * H) + 'px';
+    el.innerHTML = `<span>${name}</span>`;
+    wrap.appendChild(el);
+  };
+  for (const [name, r] of Object.entries(regions)) draw(name, r);
+  if (pending) draw($('regionpick').value, pending, ' drawing');
+}
+
+$('grab').onclick = async () => {
+  $('grab').disabled = true;
+  try {
+    const res = await api('/api/frame');
+    if (res.frame) {
+      $('calimg').src = 'data:image/jpeg;base64,' + res.frame;
+      $('calimg').style.display = 'block';
+      $('calempty').style.display = 'none';
+      $('calimg').onload = drawBoxes;
+    } else {
+      $('calempty').textContent = res.error || 'No frame available.';
+    }
+  } catch { $('calempty').textContent = 'Could not grab a frame.'; }
+  $('grab').disabled = false;
+};
+
+// Normalized drag: coordinates are fractions, so they survive any resolution.
+(() => {
+  const img = $('calimg');
+  const norm = e => {
+    const r = img.getBoundingClientRect();
+    return {x: Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)),
+            y: Math.min(1, Math.max(0, (e.clientY - r.top) / r.height))};
+  };
+  img.addEventListener('mousedown', e => {
+    if (img.style.display === 'none') return;
+    e.preventDefault(); drawing = norm(e); pending = null;
+  });
+  window.addEventListener('mousemove', e => {
+    if (!drawing) return;
+    const p = norm(e);
+    pending = {x: Math.min(drawing.x, p.x), y: Math.min(drawing.y, p.y),
+               w: Math.abs(p.x - drawing.x), h: Math.abs(p.y - drawing.y)};
+    $('savebox').disabled = !(pending.w > 0.002 && pending.h > 0.002);
+    drawBoxes();
+  });
+  window.addEventListener('mouseup', () => { drawing = null; });
+})();
+
+$('savebox').onclick = async () => {
+  if (!pending) return;
+  await api('/api/regions', {name: $('regionpick').value, box: pending});
+  pending = null; $('savebox').disabled = true;
+  await loadRegions();
+};
+
+loadRegions();
 poll();
 setInterval(poll, 700);
 </script>

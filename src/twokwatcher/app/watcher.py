@@ -16,6 +16,7 @@ from ..capture import open_source
 from ..config import Config
 from ..pipeline import EventBus, Runner
 from ..storage import Database
+from .collect import FrameCollector
 from .live import LiveState
 
 log = logging.getLogger(__name__)
@@ -44,12 +45,17 @@ class WatcherThread:
     """Owns the watcher's lifecycle for the app."""
 
     def __init__(self, config: Config, live: LiveState, db_path, *,
-                 device_index: int | None = None, video_path=None) -> None:
+                 device_index: int | None = None, video_path=None,
+                 collect_dir="data/collect", collect: bool = True) -> None:
         self.config = config
         self.live = live
         self.db_path = db_path
         self.device_index = device_index
         self.video_path = video_path
+        # On by default: the first sessions are worth far more as a labelled
+        # frame set than as a database, because every parser still unwritten
+        # is blocked on nobody having seen this HUD.
+        self.collector = FrameCollector(collect_dir, enabled=collect)
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
         self.session_id: int | None = None
@@ -77,6 +83,9 @@ class WatcherThread:
         source_name = "file" if self.video_path else "virtualcam"
         bus = EventBus()
         self.live.subscribe(bus)
+        self.collector.subscribe(bus)
+        bus.subscribe("preview",
+                      lambda _e: self.live.set_collected(self.collector.counts))
 
         try:
             # SQLite connections are per-thread, so the watcher opens its own.
@@ -103,6 +112,12 @@ class WatcherThread:
                     self.live.note("watcher", "Source ended")
                 finally:
                     db.end_session(self.session_id)
+                    manifest = self.collector.flush_manifest()
+                    if manifest is not None:
+                        self.live.note(
+                            "watcher",
+                            f"Collected {self.collector.total} frames "
+                            f"→ {manifest.parent}")
         except _Stopped:
             self.live.note("watcher", "Stopped")
         except Exception as exc:                     # noqa: BLE001

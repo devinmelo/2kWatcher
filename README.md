@@ -72,6 +72,28 @@ pip install -e ".[app]"
 2kw app --browser      # skip the native window
 ```
 
+## Frame collection
+
+The app saves a bounded, spread-out sample of frames to `data/collect/`, sorted
+into a folder per screen, and writes a `manifest.json` alongside.
+
+This is on by default because early sessions are worth far more as a labelled
+frame set than as a database. Every parser not yet written — the glyph atlas,
+the scoreboard reader, the box score parser — is blocked on nobody having seen
+this particular HUD, and those can all be built offline from collected frames.
+Play a normal session and you finish the night with the calibration set.
+
+Caps are per-screen (post-game gets the largest budget, being the densest
+structured data in the game), and a minimum interval keeps a session from
+filling up with thirty near-identical frames of one possession. State
+transitions bypass that interval, since the moment a screen changes is the most
+informative one to catch.
+
+```bash
+2kw app --no-collect              # turn it off
+2kw app --collect-dir path/to/x   # put it somewhere else
+```
+
 ## Live vs. recorded
 
 Normal use is live. `2kw run` reads the virtual camera in real time while you
@@ -82,24 +104,31 @@ threshold means running the same frames repeatedly with different values, and
 you cannot replay a live moment or iterate on a parser during a game you are
 also trying to play. It is a setup cost, not the operating model.
 
+## Preflight
+
+```bash
+2kw doctor
+```
+
+Checks Python, dependencies, capture devices, config, calibration, atlas, and
+disk. Every failure says what to do about it. Run it before a session rather
+than discovering a broken setup with a game already going.
+
 ## Calibrating
 
 **The shipped region coordinates are placeholders.** 2K moves its HUD every
 year, so they must be fitted to your own capture before anything downstream
 works.
 
-Start the game, get to a live possession, and grab some stills:
+Easiest is in the app: open **Calibrate regions**, hit *Grab frame* with 2K on
+screen, pick a region name, drag a box, Save. Already-defined regions are drawn
+on the frame so you can see what is set and what is not.
+
+The CLI equivalents still exist if you prefer them:
 
 ```bash
 2kw snapshot --count 3
-```
-
-Then drag a box on a live frame for each region:
-
-```bash
 2kw calibrate --region scoreboard
-2kw calibrate --region game_clock
-2kw calibrate --region shot_feedback
 ```
 
 Then tune the classifier thresholds. This is the one step that wants video
@@ -151,6 +180,9 @@ should mean registering another stage, not restructuring the loop.
 - Player registry keyed on gamertag
 - Scoreboard reader — structurally complete, needs a glyph atlas to produce values
 - Desktop app: live crop previews, activity log, start/stop, inline corrections
+- In-app region calibration by dragging boxes on a live frame
+- Automatic frame collection, filed by screen, with a manifest
+- `2kw doctor` preflight checks
 - Court model and homography, with a reprojection overlay to verify a fit
 
 ## What's next

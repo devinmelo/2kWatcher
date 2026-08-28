@@ -19,8 +19,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
-from ..capture import list_devices
-from ..config import Config
+from ..capture import list_devices, open_source
+from ..config import Config, Region
 from ..storage import Database
 from .live import LiveState
 from .watcher import WatcherThread
@@ -31,8 +31,9 @@ STATIC_DIR = Path(__file__).parent / "static"
 
 class AppServer:
     def __init__(self, config: Config, db_path, *, host: str = "127.0.0.1",
-                 port: int = 8770) -> None:
+                 port: int = 8770, config_path=None) -> None:
         self.config = config
+        self.config_path = config_path
         self.db_path = db_path
         self.live = LiveState()
         self.watcher = WatcherThread(config, self.live, db_path)
@@ -59,6 +60,31 @@ class AppServer:
         self.watcher.stop()
         if self._httpd is not None:
             self._httpd.shutdown()
+
+
+def _grab_frame(app: AppServer, *, skip: int = 5) -> str | None:
+    """Open the capture device just long enough to pull one frame."""
+    import base64
+
+    import cv2
+
+    try:
+        with open_source("virtualcam",
+                         device_index=app.watcher.device_index or 0) as source:
+            frame = None
+            for _ in range(skip + 1):
+                frame = source.read()
+            if frame is None:
+                return None
+            scale = 960.0 / max(frame.image.shape[1], 1)
+            image = (cv2.resize(frame.image, None, fx=scale, fy=scale,
+                                interpolation=cv2.INTER_AREA)
+                     if scale < 1 else frame.image)
+            ok, buf = cv2.imencode(".jpg", image, [cv2.IMWRITE_JPEG_QUALITY, 80])
+            return base64.b64encode(buf.tobytes()).decode("ascii") if ok else None
+    except Exception:                                      # noqa: BLE001
+        log.exception("Could not grab a frame")
+        return None
 
 
 def _handler_for(app: AppServer):
@@ -117,6 +143,15 @@ def _handler_for(app: AppServer):
                 return self._json({
                     "regions": {n: {"x": r.x, "y": r.y, "w": r.w, "h": r.h}
                                 for n, r in app.config.regions.items()}})
+            if route == "/api/frame":
+                # Prefer the live frame; otherwise grab one on demand so the
+                # region editor works before you have started watching.
+                encoded = app.live.full_frame()
+                if encoded is None:
+                    encoded = _grab_frame(app)
+                if encoded is None:
+                    return self._json({"error": "no frame available"}, 503)
+                return self._json({"frame": encoded})
             if route == "/api/history":
                 with Database(app.db_path) as db:
                     return self._json({
@@ -167,6 +202,24 @@ def _handler_for(app: AppServer):
                               f"{payload.get('field') or 'value'}: "
                               f"{payload.get('observed')!r} → {corrected!r}")
                 return self._json({"id": row_id})
+
+            if route == "/api/regions":
+                name = str(payload.get("name", "")).strip()
+                box = payload.get("box") or {}
+                if not name:
+                    return self._json({"error": "name is required"}, 400)
+                try:
+                    region = Region(name=name, x=float(box["x"]), y=float(box["y"]),
+                                    w=float(box["w"]), h=float(box["h"]))
+                except (KeyError, TypeError, ValueError):
+                    return self._json(
+                        {"error": "box needs numeric x, y, w, h"}, 400)
+                if not (region.w > 0 and region.h > 0):
+                    return self._json({"error": "box has no area"}, 400)
+                app.config.regions[name] = region
+                path = app.config.save(app.config_path)
+                app.live.note("calibration", f"Saved region '{name}'")
+                return self._json({"saved": name, "path": str(path)})
 
             if route == "/api/roster":
                 tag = str(payload.get("gamertag", "")).strip()

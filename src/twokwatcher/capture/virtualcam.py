@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import sys
 import time
+from contextlib import contextmanager
 
 import cv2
 
@@ -59,20 +60,43 @@ def list_devices(max_index: int = 8) -> list[dict]:
 
     Crude, but there is no portable way to enumerate capture devices through
     OpenCV, and this is enough to find which index is the OBS virtual camera.
+
+    Probing absent indices is expected and not an error, but OpenCV logs each
+    miss to stderr at ERROR level. Since a normal run hits several of those,
+    the backend is silenced for the duration — otherwise the output looks like
+    something broke when nothing did.
     """
     backend = cv2.CAP_DSHOW if sys.platform == "win32" else cv2.CAP_ANY
     found = []
-    for index in range(max_index):
-        cap = cv2.VideoCapture(index, backend)
-        try:
-            if not cap.isOpened():
-                continue
-            ok, image = cap.read()
-            if not ok or image is None:
-                continue
-            h, w = image.shape[:2]
-            found.append({"index": index, "width": w, "height": h,
-                          "fps": cap.get(cv2.CAP_PROP_FPS)})
-        finally:
-            cap.release()
+    with _quiet_opencv():
+        for index in range(max_index):
+            cap = cv2.VideoCapture(index, backend)
+            try:
+                if not cap.isOpened():
+                    continue
+                ok, image = cap.read()
+                if not ok or image is None:
+                    continue
+                h, w = image.shape[:2]
+                found.append({"index": index, "width": w, "height": h,
+                              "fps": cap.get(cv2.CAP_PROP_FPS)})
+            finally:
+                cap.release()
     return found
+
+
+@contextmanager
+def _quiet_opencv():
+    """Silence OpenCV's own logging, restoring it afterwards."""
+    try:
+        logging_api = cv2.utils.logging
+        previous = logging_api.getLogLevel()
+        logging_api.setLogLevel(logging_api.LOG_LEVEL_SILENT)
+    except AttributeError:
+        # Older or differently-built OpenCV; nothing to silence.
+        yield
+        return
+    try:
+        yield
+    finally:
+        logging_api.setLogLevel(previous)

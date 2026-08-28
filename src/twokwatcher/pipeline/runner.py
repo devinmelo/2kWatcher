@@ -144,5 +144,6 @@ class Runner:
             kind="preview",
             frame_index=frame.index,
             video_ts=frame.timestamp,
-            data={"crops": crops, "frame_size": frame.size},
+            data={"crops": crops, "frame": frame.image,
+                  "frame_size": frame.size},
         ))
