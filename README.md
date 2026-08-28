@@ -35,13 +35,19 @@ in feet from centre court. Pixel positions are meaningless once the camera pans.
 
 ## Setup
 
-Windows, from the repository folder:
+Windows, from the repository folder. Note the leading `.\` on every command
+run out of the venv — PowerShell will not execute a relative path without it,
+and reports the confusing "The module '.venv' could not be loaded" if you omit
+it:
 
 ```powershell
 py -3.11 -m venv .venv
-.venv\Scripts\pip install -e ".[app,ocr,dev]"
+.\.venv\Scripts\python -m pip install -e ".[app,ocr,dev]"
 copy config\regions.example.yaml config\regions.yaml
 ```
+
+Invoking `python -m pip` rather than `pip` directly also sidesteps a stale pip
+shim inside a freshly created venv.
 
 Install Tesseract (needed for the box score and shot feedback) from
 https://github.com/UB-Mannheim/tesseract/wiki — the default install location is
@@ -51,8 +57,8 @@ you install it somewhere else.
 In OBS: add your Elgato as a source, then **Start Virtual Camera**.
 
 ```powershell
-.venv\Scripts\2kw doctor      # confirm everything is found
-.venv\Scripts\2kw app
+.\.venv\Scripts\2kw doctor      # confirm everything is found
+.\.venv\Scripts\2kw app
 ```
 
 ## The app
