@@ -72,6 +72,35 @@ pip install -e ".[app]"
 2kw app --browser      # skip the native window
 ```
 
+## Shot feedback
+
+Every shot puts a banner at the top of the screen: release timing, how well you
+were contested, and the shot distance. It is the most valuable signal in the
+game and 2K gives you no way to analyse it — it shows for about a second and is
+gone. Logged over a session it answers the questions players actually have:
+whether your releases drift late as the night goes on, which jumpshot greens for
+you, whether you shoot worse contested from the wing than the corner.
+
+Three things shape the parser:
+
+- **The banner is centre-justified with a variable panel count** (two panels
+  without a distance reading, three with), so panel positions cannot be
+  hard-coded. A generous band is read whole and the values are located by
+  content, not position.
+- **The values come from a closed vocabulary**, which makes OCR accuracy much
+  less critical than it looks: "UGHT CONTEST" and "GXCELLENT" both resolve by
+  fuzzy match. Anything matching nothing is kept verbatim and flagged, so an
+  unseen verdict surfaces as unknown instead of becoming the nearest known one.
+- **One frame is not trusted; the event is.** The banner stays up for dozens of
+  frames, so a shot is read by consensus across them. On low-resolution footage
+  most individual frames abstain — but the ones that read are correct, and a
+  value is only accepted when it wins by a margin.
+
+Presence detection is gated on edge density in the band, calibrated against a
+real recording to produce no false positives. The banner animates in, so the
+first frame or two of an event fall under the threshold; that costs nothing,
+since an event only has to be noticed once.
+
 ## Post-game box score
 
 `2kw boxscore <image>` parses the MyCareer recap GAME STATS screen: ten
@@ -220,15 +249,15 @@ should mean registering another stage, not restructuring the loop.
 - Automatic frame collection, filed by screen, with a manifest
 - `2kw doctor` preflight checks
 - Post-game box score parsing, verified cell-for-cell against a real capture
+- Shot feedback (timing, contest, distance), read by consensus across an event
 - Court model and homography, with a reprojection overlay to verify a fit
 
 ## What's next
 
 1. **Glyph atlas** (`2kw atlas`) so the live scoreboard actually reads. The
    box score already parses; this is the in-game HUD.
-2. **Shot feedback logging** — every release with its timing verdict and
-   outcome. The highest-value signal in the project, and the one 2K gives you
-   no way to analyze.
+2. **Wire shot feedback into the live pipeline**, so events are detected and
+   logged as you play rather than parsed from saved frames.
 3. **Wire the box score into the live pipeline** so reaching POST_GAME parses
    and stores a game automatically.
 4. **Squad analytics.** Once box scores are keyed to the roster, lineup +/- for
