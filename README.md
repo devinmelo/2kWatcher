@@ -41,10 +41,15 @@ and reports the confusing "The module '.venv' could not be loaded" if you omit
 it:
 
 ```powershell
-py -3.11 -m venv .venv
+py --list                        # any 3.11 or newer will do
+py -3 -m venv .venv
 .\.venv\Scripts\python -m pip install -e ".[app,ocr,dev]"
 copy config\regions.example.yaml config\regions.yaml
 ```
+
+`py -3` picks your default install. Name a version (`py -3.12`) only if you
+have several and want a specific one — asking for a version you do not have
+fails with an error that is easy to scroll past, leaving no venv behind.
 
 Invoking `python -m pip` rather than `pip` directly also sidesteps a stale pip
 shim inside a freshly created venv.
