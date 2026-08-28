@@ -35,15 +35,24 @@ in feet from centre court. Pixel positions are meaningless once the camera pans.
 
 ## Setup
 
-```bash
-python -m venv .venv && .venv/bin/pip install -e ".[dev]"
+Windows, from the repository folder:
+
+```powershell
+py -3.11 -m venv .venv
+.venv\Scripts\pip install -e ".[app,ocr,dev]"
+copy config\regions.example.yaml config\regions.yaml
 ```
+
+Install Tesseract (needed for the box score and shot feedback) from
+https://github.com/UB-Mannheim/tesseract/wiki — the default install location is
+found automatically, so it does not need to be on PATH. Set `TESSERACT_CMD` if
+you install it somewhere else.
 
 In OBS: add your Elgato as a source, then **Start Virtual Camera**.
 
-```bash
-2kw devices                                  # find the virtual camera's index
-cp config/regions.example.yaml config/regions.yaml
+```powershell
+.venv\Scripts\2kw doctor      # confirm everything is found
+.venv\Scripts\2kw app
 ```
 
 ## The app
@@ -181,9 +190,12 @@ than discovering a broken setup with a game already going.
 
 ## Calibrating
 
-**The shipped region coordinates are placeholders.** 2K moves its HUD every
-year, so they must be fitted to your own capture before anything downstream
-works.
+**The shipped coordinates are measured from real Rec gameplay**, not guessed,
+so they should be close on your capture. Verify them anyway — check the crops
+the app shows beside each parsed value.
+
+**Rec draws its scoreboard at the BOTTOM of the screen.** Other modes use a
+different layout and need their own calibration; do not assume these transfer.
 
 Easiest is in the app: open **Calibrate regions**, hit *Grab frame* with 2K on
 screen, pick a region name, drag a box, Save. Already-defined regions are drawn

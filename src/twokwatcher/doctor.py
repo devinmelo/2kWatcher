@@ -107,14 +107,19 @@ def run_checks(config_path: Path | None = None,
 
     # The tesseract binary itself, which pytesseract only wraps.
     try:
-        import pytesseract
-        version = str(pytesseract.get_tesseract_version())
-        checks.append(Check("Tesseract binary", True, version))
+        from .hud.ocr import configure, find_tesseract
+
+        if configure():
+            checks.append(Check("Tesseract binary", True,
+                                find_tesseract() or "found"))
+        else:
+            raise RuntimeError("not usable")
     except Exception:                                      # noqa: BLE001
         checks.append(Check(
             "Tesseract binary", False, "not found",
-            fix="Needed for box score gamertags. Windows: "
-                "choco install tesseract (or the UB-Mannheim installer).",
+            fix="Needed for the box score and shot feedback. Windows: install "
+                "from https://github.com/UB-Mannheim/tesseract/wiki (the "
+                "default location is found automatically), or set TESSERACT_CMD.",
             warning=True,
         ))
 

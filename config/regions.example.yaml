@@ -1,14 +1,16 @@
 # 2kWatcher region config.
 #
-# All coordinates are NORMALIZED (0.0 - 1.0) fractions of the frame, so the same
+# Coordinates are NORMALIZED (0.0 - 1.0) fractions of the frame, so the same
 # file works at 720p / 1080p / 1440p.
 #
-# THE VALUES BELOW ARE PLACEHOLDERS. 2K moves its HUD every year, so they must
-# be calibrated against your own capture before anything downstream will work:
+# These values are MEASURED from real Rec gameplay (NBA 2K, 16:9), not guessed.
+# They should be close on your capture, but verify them before trusting any
+# value: open `2kw app`, use the Calibrate panel, and check the crops shown
+# beside each parsed value.
 #
-#     2kw calibrate --source virtualcam --region scoreboard
-#
-# ...which lets you drag a box on a live frame and writes it to config/regions.yaml.
+# IMPORTANT: Rec draws its scoreboard at the BOTTOM of the screen. Other modes
+# (Play Now, MyCareer games) use a different layout and need their own
+# calibration — recalibrate rather than assuming these transfer.
 
 capture:
   # OpenCV device index of the OBS virtual camera. `2kw devices` lists candidates.
@@ -19,21 +21,32 @@ capture:
   sample_fps: 10
 
 regions:
-  # The whole scoreboard bug. Used as the primary "are we in a live game?" signal.
-  scoreboard:   {x: 0.355, y: 0.035, w: 0.290, h: 0.075}
+  # --- Rec bottom scoreboard ------------------------------------------------
+  # The whole scoreboard plate. Primary "are we in a live game?" signal.
+  # Measured edge density with the bar present: ~0.063-0.070.
+  scoreboard:    {x: 0.150, y: 0.850, w: 0.350, h: 0.130}
 
-  # Individual fields inside the scoreboard, cropped separately for parsing.
-  score_home:   {x: 0.428, y: 0.045, w: 0.048, h: 0.045}
-  score_away:   {x: 0.524, y: 0.045, w: 0.048, h: 0.045}
-  game_clock:   {x: 0.470, y: 0.088, w: 0.060, h: 0.032}
-  quarter:      {x: 0.370, y: 0.088, w: 0.045, h: 0.032}
-  shot_clock:   {x: 0.483, y: 0.130, w: 0.034, h: 0.034}
+  # Your team's score sits left of the REC logo, the opponent's right of it.
+  # Left is dark-on-red and reads less reliably than right, which is red-on-white.
+  score_home:    {x: 0.235, y: 0.900, w: 0.037, h: 0.042}
+  score_away:    {x: 0.362, y: 0.900, w: 0.040, h: 0.042}
 
-  # Where the "Excellent / Slightly Early / Slightly Late" release text appears.
-  shot_feedback: {x: 0.400, y: 0.760, w: 0.200, h: 0.060}
+  # Game clock, under the REC logo. Wide enough for "12:00" as well as "6.9",
+  # which is what it shows under ten seconds.
+  game_clock:    {x: 0.292, y: 0.905, w: 0.046, h: 0.030}
+  quarter:       {x: 0.286, y: 0.943, w: 0.029, h: 0.029}
 
-  # MyCareer / Rec teammate grade.
-  teammate_grade: {x: 0.055, y: 0.880, w: 0.060, h: 0.050}
+  # --- Shot feedback --------------------------------------------------------
+  # Top-centre banner: TIMING / COVERAGE / DISTANCE. Deliberately generous —
+  # the banner is centred and its width changes with its panel count.
+  shot_feedback: {x: 0.300, y: 0.016, w: 0.440, h: 0.064}
 
-  # Full-frame region for post-game box score capture. Parsed as one screenshot.
+  # --- Your player, top right ----------------------------------------------
+  # Teammate grade, and the PTS / REB / AST / DREB strip beside it.
+  teammate_grade: {x: 0.828, y: 0.028, w: 0.030, h: 0.040}
+  my_stats:       {x: 0.862, y: 0.020, w: 0.125, h: 0.050}
+
+  # --- Post-game ------------------------------------------------------------
+  # The box score parser carries its own measured table layout, so this is only
+  # used to capture the screen for it.
   box_score:    {x: 0.000, y: 0.000, w: 1.000, h: 1.000}

@@ -89,13 +89,13 @@ class ShotFeedbackReader:
         self._baseline: float | None = None
 
     def available(self) -> bool:
-        try:
-            import pytesseract
-            pytesseract.get_tesseract_version()
-            self._tesseract = pytesseract
-            return True
-        except Exception:                                   # noqa: BLE001
+        from .ocr import configure
+
+        if not configure():
             return False
+        import pytesseract
+        self._tesseract = pytesseract
+        return True
 
     def band(self, image: np.ndarray) -> np.ndarray:
         h, w = image.shape[:2]

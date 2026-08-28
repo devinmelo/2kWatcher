@@ -139,13 +139,13 @@ class BoxScoreParser:
 
     def available(self) -> bool:
         """Whether OCR is usable. Names cannot be read without it."""
-        try:
-            import pytesseract
-            pytesseract.get_tesseract_version()
-            self._tesseract = pytesseract
-            return True
-        except Exception:                                   # noqa: BLE001
+        from .ocr import configure
+
+        if not configure():
             return False
+        import pytesseract
+        self._tesseract = pytesseract
+        return True
 
     def parse(self, image: np.ndarray) -> BoxScore:
         if self._tesseract is None and not self.available():
