@@ -21,6 +21,17 @@ ESSENTIAL_REGIONS = ("scoreboard", "game_clock")
 MIN_FREE_GB = 2.0
 
 
+def _matches_example(config: Config) -> bool:
+    """Whether the loaded regions are byte-for-byte the shipped ones."""
+    if not EXAMPLE_CONFIG_PATH.exists():
+        return False
+    try:
+        example = Config.load(EXAMPLE_CONFIG_PATH)
+    except Exception:                                      # noqa: BLE001
+        return False
+    return config.regions == example.regions
+
+
 @dataclass
 class Check:
     name: str
@@ -91,14 +102,19 @@ def run_checks(config_path: Path | None = None,
             "all present" if not missing else f"missing {', '.join(missing)}",
             fix="Open `2kw app` and drag boxes in the Calibrate panel.",
         ))
-        # Placeholder coordinates are worse than missing ones: they look valid
-        # and silently read the wrong pixels.
+        # Whether the file exists says nothing — copying the example creates
+        # one. What matters is whether its regions still match the shipped
+        # defaults, which is the difference between calibrated and merely
+        # present.
+        untouched = using_example or _matches_example(config)
         checks.append(Check(
-            "Regions calibrated", not using_example,
-            "fitted to your capture" if not using_example
-            else "using shipped placeholders",
-            fix="Placeholder coordinates will read the wrong pixels. "
-                "Calibrate in the app before trusting any value.",
+            "Regions calibrated", not untouched,
+            "adjusted for your capture" if not untouched
+            else "still the shipped defaults",
+            fix="The defaults are measured from real Rec gameplay, so they "
+                "should be close — but verify them in the app's Calibrate "
+                "panel before trusting any value, and note that other modes "
+                "lay the HUD out differently.",
             warning=True,
         ))
     except Exception as exc:                               # noqa: BLE001
