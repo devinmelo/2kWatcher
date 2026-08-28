@@ -42,7 +42,7 @@ def run_checks(config_path: Path | None = None,
     ))
 
     for module, extra in (("cv2", None), ("numpy", None), ("yaml", None),
-                          ("webview", "app")):
+                          ("webview", "app"), ("pytesseract", "ocr")):
         try:
             __import__(module)
             checks.append(Check(f"import {module}", True, "installed"))
@@ -104,6 +104,19 @@ def run_checks(config_path: Path | None = None,
     except Exception as exc:                               # noqa: BLE001
         checks.append(Check("Region config parses", False, str(exc),
                             fix="Fix or delete config/regions.yaml."))
+
+    # The tesseract binary itself, which pytesseract only wraps.
+    try:
+        import pytesseract
+        version = str(pytesseract.get_tesseract_version())
+        checks.append(Check("Tesseract binary", True, version))
+    except Exception:                                      # noqa: BLE001
+        checks.append(Check(
+            "Tesseract binary", False, "not found",
+            fix="Needed for box score gamertags. Windows: "
+                "choco install tesseract (or the UB-Mannheim installer).",
+            warning=True,
+        ))
 
     # Glyph atlas — the reason values read as "not read".
     atlas = Path("data/atlas")

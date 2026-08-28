@@ -72,6 +72,42 @@ pip install -e ".[app]"
 2kw app --browser      # skip the native window
 ```
 
+## Post-game box score
+
+`2kw boxscore <image>` parses the MyCareer recap GAME STATS screen: ten
+players, gamertags, grades and full stat lines from one frame.
+
+This is the densest structured data 2K exposes, and it is worth more per unit
+of effort than any amount of real-time vision. Two properties of the screen do
+most of the work:
+
+- **A green triangle marks your row and a red one your matchup.** Identity is
+  read off the screen rather than configured, so it stays correct when you
+  change build, team or mode. AI-filled slots are detected by the absence of a
+  platform icon — a structural signal, unlike the "AI Player" label, which OCR
+  renders "Al Player" about as often.
+- **The TOTAL row is a checksum.** Player rows must sum to it for PTS, REB,
+  AST, STL, BLK and the made/attempted fractions, which validates a parse for
+  free. FOULS and TO are deliberately excluded: 2K reports team fouls and team
+  turnovers there, and those genuinely differ from the sum of the rows.
+
+Unlike the live scoreboard, this is read once per game, so OCR is affordable —
+and necessary, since gamertags are arbitrary strings that templates cannot
+cover. OCR still confuses a few glyph pairs, so tags are snapped onto the
+player registry by fuzzy match: a gamertag only has to be read correctly, and
+confirmed, once.
+
+Cells that cannot be read come back as `None`, never as a guess, and are
+listed so the app can ask. A parse is `trustworthy` only when nothing is unread
+and every checksum passes.
+
+Needs OCR:
+
+```bash
+pip install -e ".[ocr]"
+# plus the binary: apt install tesseract-ocr  /  choco install tesseract
+```
+
 ## Frame collection
 
 The app saves a bounded, spread-out sample of frames to `data/collect/`, sorted
@@ -183,17 +219,18 @@ should mean registering another stage, not restructuring the loop.
 - In-app region calibration by dragging boxes on a live frame
 - Automatic frame collection, filed by screen, with a manifest
 - `2kw doctor` preflight checks
+- Post-game box score parsing, verified cell-for-cell against a real capture
 - Court model and homography, with a reprojection overlay to verify a fit
 
 ## What's next
 
-1. **Glyph atlas** (`2kw atlas`) so the scoreboard actually reads.
+1. **Glyph atlas** (`2kw atlas`) so the live scoreboard actually reads. The
+   box score already parses; this is the in-game HUD.
 2. **Shot feedback logging** — every release with its timing verdict and
    outcome. The highest-value signal in the project, and the one 2K gives you
    no way to analyze.
-3. **Post-game box score parsing.** In Rec, one screenshot yields all ten
-   gamertags with full stat lines. Dense, structured, no real-time CV needed —
-   and it doubles as ground truth for grading everything else.
+3. **Wire the box score into the live pipeline** so reaching POST_GAME parses
+   and stores a game automatically.
 4. **Squad analytics.** Once box scores are keyed to the roster, lineup +/- for
    your friend group falls out of a GROUP BY.
 5. **Highlight clipping** via obs-websocket triggering OBS's replay buffer.

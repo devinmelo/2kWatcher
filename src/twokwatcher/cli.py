@@ -213,6 +213,63 @@ def cmd_run(args) -> int:
     return 0
 
 
+def cmd_boxscore(args) -> int:
+    """Parse a post-game box score screenshot."""
+    import cv2
+
+    from .hud import BoxScoreParser, resolve_names
+
+    image = cv2.imread(str(args.image))
+    if image is None:
+        print(f"Could not read {args.image}", file=sys.stderr)
+        return 1
+
+    parser = BoxScoreParser()
+    if not parser.available():
+        print("Tesseract is not installed. Gamertags need it.\n"
+              '  pip install -e ".[ocr]"  and install the tesseract binary.',
+              file=sys.stderr)
+        return 1
+
+    box = parser.parse(image)
+    with Database(args.db) as db:
+        roster = [r["gamertag"] for r in db.roster()]
+    changed = resolve_names(box, roster)
+
+    head = (f"{'':2}{'player':<20}{'grd':<5}{'pts':>4}{'reb':>4}{'ast':>4}"
+            f"{'stl':>4}{'blk':>4}{'pf':>4}{'to':>4}   {'fg':<7}{'3p':<7}{'ft':<7}")
+    for team, label in (("us", "MY TEAM"), ("them", "OPPONENT")):
+        print(f"\n{label}\n{head}")
+        for row in (p for p in box.players if p.team == team):
+            mark = ">" if row.is_you else ("*" if row.is_matchup else " ")
+            n = lambda a: "-" if getattr(row, a) is None else getattr(row, a)
+            f = lambda a, b: ("-" if getattr(row, a) is None
+                              else f"{getattr(row, a)}/{getattr(row, b)}")
+            name = (row.name or "?") + (" (AI)" if row.is_ai else "")
+            print(f"{mark} {name:<20}{str(row.grade or '-'):<5}{str(n('pts')):>4}"
+                  f"{str(n('reb')):>4}{str(n('ast')):>4}{str(n('stl')):>4}"
+                  f"{str(n('blk')):>4}{str(n('fouls')):>4}{str(n('tov')):>4}   "
+                  f"{f('fgm','fga'):<7}{f('tpm','tpa'):<7}{f('ftm','fta'):<7}")
+        total = box.totals.get(team)
+        if total:
+            print(f"  {'TOTAL':<20}{str(total.grade or '-'):<5}{str(total.pts):>4}"
+                  f"{str(total.reb):>4}{str(total.ast):>4}")
+
+    print("\n> = you, * = your matchup")
+    if changed:
+        print("resolved against roster: "
+              + ", ".join(f"{k!r}->{v!r}" for k, v in changed.items()))
+    if box.checksum_failures:
+        print("\nCHECKSUM FAILURES (the parse disagrees with the TOTAL row):")
+        for failure in box.checksum_failures:
+            print(f"  {failure}")
+    if box.unread_cells:
+        print(f"\nUnread cells ({len(box.unread_cells)}): "
+              + ", ".join(box.unread_cells))
+    print("\ntrustworthy:", box.trustworthy)
+    return 0
+
+
 def cmd_doctor(args) -> int:
     """Check the setup before a session, rather than during one."""
     from .doctor import format_report, run_checks
@@ -304,6 +361,11 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("run", parents=[common, src], help="watch and log gameplay")
     p.add_argument("--limit", type=int, default=0, help="stop after N samples")
     p.set_defaults(func=cmd_run)
+
+    p = sub.add_parser("boxscore", parents=[common],
+                       help="parse a post-game box score screenshot")
+    p.add_argument("image", type=Path)
+    p.set_defaults(func=cmd_boxscore)
 
     sub.add_parser("doctor", parents=[common],
                    help="check the setup before a session").set_defaults(

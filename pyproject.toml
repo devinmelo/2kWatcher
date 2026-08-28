@@ -14,6 +14,12 @@ dependencies = [
 app = [
     "pywebview>=5.0",
 ]
+# Post-game box score parsing. Gamertags are arbitrary strings, so unlike the
+# live scoreboard they need real OCR rather than template matching. Also needs
+# the tesseract binary itself (apt install tesseract-ocr / choco install tesseract).
+ocr = [
+    "pytesseract>=0.3.10",
+]
 # Installed later, when the tracker work starts.
 vision = [
     "ultralytics>=8.3",
@@ -32,6 +38,9 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+twokwatcher = ["hud/glyphs/*.png", "app/static/*", "storage/*.sql"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
