@@ -39,6 +39,7 @@ class Runner:
         *,
         bus: EventBus | None = None,
         sample_fps: float | None = None,
+        preview_every: int = 5,
     ) -> None:
         self.source = source
         self.config = config
@@ -47,6 +48,15 @@ class Runner:
         self.scoreboard = ScoreboardReader(config)
         self.machine = StateMachine()
         self.stats = RunnerStats()
+
+        # How often to publish HUD crops for the UI. Encoding costs real time,
+        # so this runs well below the sample rate — the crops are for a human
+        # to eyeball, and a human cannot read ten updates a second anyway.
+        self.preview_every = max(1, preview_every)
+        self._preview_regions = (
+            "scoreboard", "game_clock", "score_home", "score_away",
+            "shot_clock", "shot_feedback",
+        )
 
         # Sample well below the capture rate. The HUD does not change fast
         # enough to justify 60fps, and the headroom belongs to the tracker.
@@ -75,6 +85,9 @@ class Runner:
         return self.stats
 
     def _process(self, frame) -> None:
+        if self.stats.frames_sampled % self.preview_every == 0:
+            self._publish_preview(frame)
+
         observed, signals = self.classifier.classify(frame.image)
         key = observed.value
         self.stats.state_frames[key] = self.stats.state_frames.get(key, 0) + 1
@@ -114,3 +127,22 @@ class Runner:
         # with its timing verdict and outcome — and it needs the same glyph
         # atlas treatment as the scoreboard, plus a template per verdict string.
         _ = signals
+
+    def _publish_preview(self, frame) -> None:
+        """Publish the crops the parsers are working from.
+
+        Showing a human the actual pixels beside the parsed value is what makes
+        a bad region or a misread diagnosable. A wrong number on its own does
+        not say whether the crop, the threshold or the atlas is at fault.
+        """
+        crops = {}
+        for name in self._preview_regions:
+            region = self.config.regions.get(name)
+            if region is not None:
+                crops[name] = region.crop(frame.image)
+        self.bus.publish(Event(
+            kind="preview",
+            frame_index=frame.index,
+            video_ts=frame.timestamp,
+            data={"crops": crops, "frame_size": frame.size},
+        ))

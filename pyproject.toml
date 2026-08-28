@@ -10,6 +10,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# The native app window. Without it the app falls back to a browser tab.
+app = [
+    "pywebview>=5.0",
+]
 # Installed later, when the tracker work starts.
 vision = [
     "ultralytics>=8.3",

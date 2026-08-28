@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>2kWatcher</title>
+<style>
+  :root {
+    --bg: #0e1116; --panel: #161b22; --line: #262d38;
+    --text: #e6edf3; --dim: #8b949e; --accent: #4f9cf9;
+    --live: #3fb950; --warn: #d29922; --bad: #f85149;
+    --mono: ui-monospace, "Cascadia Code", Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  header {
+    display: flex; align-items: center; gap: 14px;
+    padding: 10px 16px; border-bottom: 1px solid var(--line);
+    background: var(--panel); position: sticky; top: 0; z-index: 5;
+  }
+  h1 { font-size: 15px; margin: 0; letter-spacing: .3px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--dim); }
+  .dot.on { background: var(--live); box-shadow: 0 0 8px var(--live); }
+  .dot.err { background: var(--bad); box-shadow: 0 0 8px var(--bad); }
+  .spacer { flex: 1; }
+  button {
+    background: #21262d; color: var(--text); border: 1px solid var(--line);
+    border-radius: 6px; padding: 6px 13px; font-size: 13px; cursor: pointer;
+  }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button:disabled { opacity: .4; cursor: default; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #06131f; font-weight: 600; }
+  select, input {
+    background: #0d1117; color: var(--text); border: 1px solid var(--line);
+    border-radius: 6px; padding: 5px 9px; font-size: 13px;
+  }
+  main { display: grid; grid-template-columns: 1.35fr 1fr; gap: 14px; padding: 14px; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 9px; }
+  section > h2 {
+    font-size: 11px; text-transform: uppercase; letter-spacing: .09em;
+    color: var(--dim); margin: 0; padding: 11px 14px; border-bottom: 1px solid var(--line);
+  }
+  .body { padding: 13px 14px; }
+  .stats { display: flex; flex-wrap: wrap; gap: 22px; }
+  .stat .k { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--dim); }
+  .stat .v { font-size: 19px; font-family: var(--mono); }
+  .state-live { color: var(--live); } .state-menu, .state-unknown { color: var(--dim); }
+  .state-replay, .state-dead_ball, .state-loading { color: var(--warn); }
+  .state-post_game { color: var(--accent); }
+
+  .crops { display: flex; flex-direction: column; gap: 11px; }
+  .crop {
+    display: grid; grid-template-columns: 130px 1fr auto; align-items: center;
+    gap: 12px; padding: 9px 11px; background: #0d1117;
+    border: 1px solid var(--line); border-radius: 7px;
+  }
+  .crop .name { font-size: 11px; color: var(--dim); font-family: var(--mono); }
+  .crop img {
+    max-width: 100%; max-height: 54px; image-rendering: pixelated;
+    border-radius: 4px; background: #000; display: block;
+  }
+  .crop .read { font-family: var(--mono); font-size: 16px; min-width: 60px; text-align: right; }
+  .crop .read.none { color: var(--dim); font-size: 12px; font-style: italic; }
+  .fixrow { grid-column: 1 / -1; display: none; gap: 8px; padding-top: 4px; }
+  .fixrow.open { display: flex; }
+  .fixrow input { flex: 1; }
+
+  .log { max-height: 340px; overflow-y: auto; font-family: var(--mono); font-size: 12px; }
+  .log div { padding: 3px 0; border-bottom: 1px solid #1c222b; display: flex; gap: 10px; }
+  .log .t { color: var(--dim); flex-shrink: 0; }
+  .log .error { color: var(--bad); } .log .correction { color: var(--accent); }
+  .empty { color: var(--dim); font-style: italic; padding: 6px 0; }
+  .banner { padding: 9px 14px; background: #2d1618; color: #ffb4ae; border-bottom: 1px solid var(--bad); font-size: 13px; }
+  .hint { color: var(--dim); font-size: 12px; margin-top: 9px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="dot" id="dot"></div>
+  <h1>2kWatcher</h1>
+  <span id="state" class="state-unknown" style="font-family:var(--mono)">—</span>
+  <div class="spacer"></div>
+  <select id="device"><option value="">detecting…</option></select>
+  <button id="toggle" class="primary">Start watching</button>
+</header>
+<div class="banner" id="banner" style="display:none"></div>
+
+<main>
+  <div style="display:flex;flex-direction:column;gap:14px">
+    <section>
+      <h2>What it's reading</h2>
+      <div class="body">
+        <div class="crops" id="crops"><div class="empty">Start watching to see live crops.</div></div>
+        <div class="hint">
+          Each row is the actual pixels the parser is looking at, beside what it read.
+          A bad crop or a misread is visible here — hit Fix and the correction is saved
+          with the image, which is what later trains the parser.
+        </div>
+      </div>
+    </section>
+    <section>
+      <h2>Session</h2>
+      <div class="body stats">
+        <div class="stat"><div class="k">Source</div><div class="v" id="source" style="font-size:13px">—</div></div>
+        <div class="stat"><div class="k">Frames seen</div><div class="v" id="seen">0</div></div>
+        <div class="stat"><div class="k">Sampled</div><div class="v" id="sampled">0</div></div>
+        <div class="stat"><div class="k">In state</div><div class="v" id="dwell">0s</div></div>
+      </div>
+    </section>
+  </div>
+
+  <section>
+    <h2>Activity</h2>
+    <div class="body log" id="log"><div class="empty">Nothing yet.</div></div>
+  </section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+let running = false, lastFrame = null;
+
+async function api(path, body) {
+  const opts = body ? {method: 'POST', headers: {'Content-Type': 'application/json'},
+                       body: JSON.stringify(body)} : {};
+  const res = await fetch(path, opts);
+  return res.json();
+}
+
+// Human labels for the crop rows, and which scoreboard field each maps to.
+const FIELDS = {
+  scoreboard:    ['Scoreboard',   null],
+  score_home:    ['Score (home)', 'score_home'],
+  score_away:    ['Score (away)', 'score_away'],
+  game_clock:    ['Game clock',   'game_clock'],
+  shot_clock:    ['Shot clock',   'shot_clock'],
+  shot_feedback: ['Shot feedback', null],
+};
+
+function renderCrops(previews, scoreboard) {
+  const host = $('crops');
+  const names = Object.keys(previews);
+  if (!names.length) {
+    host.innerHTML = '<div class="empty">' +
+      (running ? 'Waiting for frames…' : 'Start watching to see live crops.') + '</div>';
+    return;
+  }
+  host.innerHTML = '';
+  for (const name of names) {
+    const [label, field] = FIELDS[name] || [name, null];
+    const value = field ? scoreboard[field] : undefined;
+    const row = document.createElement('div');
+    row.className = 'crop';
+    const shown = (value === undefined || value === null)
+      ? '<span class="read none">not read</span>'
+      : `<span class="read">${value}</span>`;
+    row.innerHTML =
+      `<div class="name">${label}</div>` +
+      `<img src="data:image/jpeg;base64,${previews[name]}" alt="${label}">` +
+      `${shown}` +
+      `<div class="fixrow"><input placeholder="What should it say?">` +
+      `<button>Save</button><button class="cancel">Cancel</button></div>`;
+
+    // Clicking the value opens an inline correction box for that field.
+    const read = row.querySelector('.read');
+    const fix = row.querySelector('.fixrow');
+    read.style.cursor = 'pointer';
+    read.title = 'Click to correct';
+    read.onclick = () => { fix.classList.add('open'); fix.querySelector('input').focus(); };
+    row.querySelector('.cancel').onclick = () => fix.classList.remove('open');
+    const save = async () => {
+      const input = fix.querySelector('input');
+      if (!input.value.trim()) return;
+      await api('/api/correct', {
+        kind: 'scoreboard', field: field || name,
+        observed: value === undefined || value === null ? null : String(value),
+        corrected: input.value.trim(),
+        frame_index: lastFrame,
+        crop: previews[name],
+      });
+      input.value = ''; fix.classList.remove('open');
+    };
+    fix.querySelector('button').onclick = save;
+    fix.querySelector('input').onkeydown = e => { if (e.key === 'Enter') save(); };
+    host.appendChild(row);
+  }
+}
+
+function renderLog(events) {
+  const host = $('log');
+  if (!events.length) { host.innerHTML = '<div class="empty">Nothing yet.</div>'; return; }
+  host.innerHTML = events.map(e =>
+    `<div class="${e.kind}"><span class="t">${e.at}</span><span>${e.message}</span></div>`
+  ).join('');
+}
+
+async function poll() {
+  let s;
+  try { s = await api('/api/status'); } catch { return; }
+  running = s.running;
+
+  $('dot').className = 'dot' + (s.error ? ' err' : s.running ? ' on' : '');
+  $('state').textContent = s.state;
+  $('state').className = 'state-' + s.state;
+  $('source').textContent = s.running ? s.source : 'idle';
+  $('seen').textContent = s.frames_seen.toLocaleString();
+  $('sampled').textContent = s.frames_sampled.toLocaleString();
+  $('dwell').textContent = s.state_seconds + 's';
+  $('toggle').textContent = s.running ? 'Stop watching' : 'Start watching';
+
+  const banner = $('banner');
+  if (s.error) { banner.style.display = 'block'; banner.textContent = s.error; }
+  else banner.style.display = 'none';
+
+  if (s.events.length && s.events[0].frame !== null) lastFrame = s.events[0].frame;
+  renderCrops(s.previews, s.scoreboard || {});
+  renderLog(s.events);
+}
+
+$('toggle').onclick = async () => {
+  $('toggle').disabled = true;
+  const device = $('device').value;
+  await api(running ? '/api/watch/stop' : '/api/watch/start',
+            running ? {} : {device_index: device === '' ? null : Number(device)});
+  $('toggle').disabled = false;
+  poll();
+};
+
+(async () => {
+  const {devices} = await api('/api/devices');
+  const sel = $('device');
+  sel.innerHTML = devices.length
+    ? devices.map(d => `<option value="${d.index}">Device ${d.index} — ${d.width}×${d.height}</option>`).join('')
+    : '<option value="">no devices found</option>';
+})();
+
+poll();
+setInterval(poll, 700);
+</script>
+</body>
+</html>

@@ -46,6 +46,32 @@ In OBS: add your Elgato as a source, then **Start Virtual Camera**.
 cp config/regions.example.yaml config/regions.yaml
 ```
 
+## The app
+
+`2kw app` opens a native window (pywebview) hosting a local server on
+127.0.0.1. That window is the normal way to use this: open it, hit **Start
+watching**, play.
+
+The main panel shows **the actual pixels each parser is looking at, beside what
+it read**. That is the point of it — a wrong number on its own tells you
+nothing about whether the crop, the threshold or the atlas is at fault, but the
+crop next to the value makes it obvious. Click any value to correct it.
+
+Corrections are stored **with the crop that caused them**, which is what turns
+a fix into a labelled training example. Correcting the app while using it is
+how the glyph atlas and, later, the models improve.
+
+Because it is a local server behind a native window rather than a bundled
+frontend, the same UI is reachable from a phone or tablet, and later from OBS
+as a browser source, with no separate build. Without pywebview installed it
+falls back to opening a browser tab rather than refusing to start.
+
+```bash
+pip install -e ".[app]"
+2kw app
+2kw app --browser      # skip the native window
+```
+
 ## Live vs. recorded
 
 Normal use is live. `2kw run` reads the virtual camera in real time while you
@@ -107,8 +133,10 @@ parser and play at the same time, and recordings are repeatable.
 capture/    frame sources — virtual camera, video file, swappable
 state/      screen classification and the debounced state machine
 hud/        scoreboard and HUD parsing
+vision/     court geometry and the image <-> court-feet transform
 pipeline/   the frame loop and the event bus stages attach to
 storage/    SQLite schema and access
+app/        local server, web UI, and the native window hosting it
 ```
 
 The frame loop publishes events and knows nothing about the database, the
@@ -122,6 +150,8 @@ should mean registering another stage, not restructuring the loop.
 - Region calibration, snapshots, and threshold-tuning tools
 - Player registry keyed on gamertag
 - Scoreboard reader — structurally complete, needs a glyph atlas to produce values
+- Desktop app: live crop previews, activity log, start/stop, inline corrections
+- Court model and homography, with a reprojection overlay to verify a fit
 
 ## What's next
 
@@ -135,6 +165,5 @@ should mean registering another stage, not restructuring the loop.
 4. **Squad analytics.** Once box scores are keyed to the roster, lineup +/- for
    your friend group falls out of a GROUP BY.
 5. **Highlight clipping** via obs-websocket triggering OBS's replay buffer.
-6. **Player tracking.** Court homography first, then detection, then tracking in
-   court space — in that order, because homography makes tracking easier rather
-   than the reverse.
+6. **Player tracking.** Homography is done; next is landmark detection to feed
+   it, then a YOLO player detector, then ByteTrack running in court space.

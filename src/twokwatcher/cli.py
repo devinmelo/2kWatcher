@@ -213,6 +213,14 @@ def cmd_run(args) -> int:
     return 0
 
 
+def cmd_app(args) -> int:
+    """Open the desktop app."""
+    from .app.desktop import launch
+
+    return launch(Config.load(args.config), args.db, port=args.port,
+                  window=not args.browser)
+
+
 def cmd_roster(args) -> int:
     """Show or edit the player registry."""
     with Database(args.db) as db:
@@ -285,6 +293,13 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("run", parents=[common, src], help="watch and log gameplay")
     p.add_argument("--limit", type=int, default=0, help="stop after N samples")
     p.set_defaults(func=cmd_run)
+
+    p = sub.add_parser("app", parents=[common],
+                       help="open the desktop app (default way to use this)")
+    p.add_argument("--port", type=int, default=8770)
+    p.add_argument("--browser", action="store_true",
+                   help="open in your browser instead of a native window")
+    p.set_defaults(func=cmd_app)
 
     p = sub.add_parser("roster", parents=[common], help="show or edit the player registry")
     p.add_argument("--add", metavar="GAMERTAG")

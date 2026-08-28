@@ -135,6 +135,38 @@ class Database:
         self.conn.commit()
         return cur.lastrowid
 
+    def record_correction(
+        self, *, kind: str, corrected: str, field: str | None = None,
+        observed: str | None = None, game_id: int | None = None,
+        frame_index: int | None = None, crop_png: bytes | None = None,
+    ) -> int:
+        """Store a human correction, with the pixels that caused it.
+
+        The crop is the point: a correction without it is a one-off fix, a
+        correction with it is a labelled example the parsers can be improved
+        against later.
+        """
+        cur = self.conn.execute(
+            "INSERT INTO corrections (created_at, kind, field, observed,"
+            " corrected, game_id, frame_index, crop_png)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (_now(), kind, field, observed, corrected, game_id, frame_index,
+             crop_png),
+        )
+        self.conn.commit()
+        return cur.lastrowid
+
+    def corrections(self, limit: int = 50) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            "SELECT id, created_at, kind, field, observed, corrected"
+            " FROM corrections ORDER BY id DESC LIMIT ?", (limit,)
+        ).fetchall()
+
+    def recent_games(self, limit: int = 25) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            "SELECT * FROM games ORDER BY id DESC LIMIT ?", (limit,)
+        ).fetchall()
+
     def log_state(
         self, session_id: int, previous: str, current: str,
         frame_index: int, video_ts: float,

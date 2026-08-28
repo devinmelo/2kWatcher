@@ -95,6 +95,22 @@ CREATE TABLE IF NOT EXISTS tracks (
     confidence  REAL
 );
 
+-- Corrections a human made in the UI. The crop is stored alongside, which is
+-- what turns a fix into a labelled training example: correcting the app while
+-- using it is how the glyph atlas and, later, the models improve.
+CREATE TABLE IF NOT EXISTS corrections (
+    id          INTEGER PRIMARY KEY,
+    created_at  TEXT NOT NULL,
+    kind        TEXT NOT NULL,       -- 'scoreboard' | 'gamertag' | 'box_score' | ...
+    field       TEXT,                -- which value was wrong, e.g. 'score_home'
+    observed    TEXT,                -- what the parser read, NULL if it read nothing
+    corrected   TEXT NOT NULL,       -- what it should have been
+    game_id     INTEGER REFERENCES games(id) ON DELETE SET NULL,
+    frame_index INTEGER,
+    crop_png    BLOB                 -- the pixels that produced the misread
+);
+
+CREATE INDEX IF NOT EXISTS idx_corrections_kind ON corrections(kind, field);
 CREATE INDEX IF NOT EXISTS idx_events_game    ON events(game_id, kind);
 CREATE INDEX IF NOT EXISTS idx_gp_game        ON game_players(game_id);
 CREATE INDEX IF NOT EXISTS idx_gp_player      ON game_players(player_id);
