@@ -46,11 +46,29 @@ In OBS: add your Elgato as a source, then **Start Virtual Camera**.
 cp config/regions.example.yaml config/regions.yaml
 ```
 
+## Live vs. recorded
+
+Normal use is live. `2kw run` reads the virtual camera in real time while you
+play and logs as it goes — no footage involved.
+
+Recordings exist for *building* the parsers, not for using them. Tuning a
+threshold means running the same frames repeatedly with different values, and
+you cannot replay a live moment or iterate on a parser during a game you are
+also trying to play. It is a setup cost, not the operating model.
+
 ## Calibrating
 
 **The shipped region coordinates are placeholders.** 2K moves its HUD every
 year, so they must be fitted to your own capture before anything downstream
-works. Drag a box on a live frame for each region:
+works.
+
+Start the game, get to a live possession, and grab some stills:
+
+```bash
+2kw snapshot --count 3
+```
+
+Then drag a box on a live frame for each region:
 
 ```bash
 2kw calibrate --region scoreboard
@@ -58,7 +76,8 @@ works. Drag a box on a live frame for each region:
 2kw calibrate --region shot_feedback
 ```
 
-Then tune the classifier thresholds against real footage:
+Then tune the classifier thresholds. This is the one step that wants video
+rather than stills, because it needs the same frames replayed repeatedly:
 
 ```bash
 2kw record --output captures/rec-game.mp4 --seconds 300
@@ -100,7 +119,7 @@ should mean registering another stage, not restructuring the loop.
 
 - Frame capture from the OBS virtual camera or a recording
 - Screen-state classification and debounced transitions, logged to SQLite
-- Region calibration and threshold-tuning tools
+- Region calibration, snapshots, and threshold-tuning tools
 - Player registry keyed on gamertag
 - Scoreboard reader — structurally complete, needs a glyph atlas to produce values
 

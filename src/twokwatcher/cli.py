@@ -129,6 +129,50 @@ def cmd_record(args) -> int:
     return 0
 
 
+def cmd_snapshot(args) -> int:
+    """Grab still frames from the live feed.
+
+    Lighter than `record` and usually all that is needed: calibration wants a
+    few clean stills of the HUD, not minutes of video.
+    """
+    import time
+
+    import cv2
+
+    config = Config.load(args.config)
+    out_dir = Path(args.output)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+
+    written = []
+    with _source_from_args(args, config) as source:
+        for n in range(args.count):
+            if n and args.interval:
+                # Space shots out so they capture different game situations
+                # rather than three copies of the same moment.
+                deadline = time.monotonic() + args.interval
+                while time.monotonic() < deadline:
+                    if source.read() is None:
+                        break
+            # Discard a few frames first; the first off a virtual camera is
+            # frequently blank or half-composited.
+            frame = None
+            for _ in range(args.skip + 1):
+                frame = source.read()
+            if frame is None:
+                break
+            path = out_dir / f"{stamp}-{n:02d}.png"
+            cv2.imwrite(str(path), frame.image)
+            written.append(path)
+            print(f"  {path}  ({frame.size[0]}x{frame.size[1]})")
+
+    if not written:
+        print("Could not read from the source.", file=sys.stderr)
+        return 1
+    print(f"\nWrote {len(written)} snapshot(s) to {out_dir}")
+    return 0
+
+
 def cmd_run(args) -> int:
     """Watch gameplay and log what happens."""
     config = Config.load(args.config)
@@ -227,6 +271,16 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--output", type=Path, default="captures/session.mp4")
     p.add_argument("--seconds", type=int, default=0, help="0 means until Ctrl-C")
     p.set_defaults(func=cmd_record)
+
+    p = sub.add_parser("snapshot", parents=[common, src],
+                       help="grab still frames from the live feed")
+    p.add_argument("--count", type=int, default=3)
+    p.add_argument("--interval", type=float, default=3.0,
+                   help="seconds between shots")
+    p.add_argument("--skip", type=int, default=10,
+                   help="frames to discard before each shot")
+    p.add_argument("--output", type=Path, default=Path("data/snapshots"))
+    p.set_defaults(func=cmd_snapshot)
 
     p = sub.add_parser("run", parents=[common, src], help="watch and log gameplay")
     p.add_argument("--limit", type=int, default=0, help="stop after N samples")
