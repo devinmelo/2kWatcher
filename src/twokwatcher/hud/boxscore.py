@@ -171,6 +171,7 @@ class BoxScoreParser:
                                               is_total=True)
             box.checksum_failures.extend(
                 self._verify(parsed, box.totals[team], team))
+        _orient_teams(box)
         return box
 
     # --- rows and cells -------------------------------------------------
@@ -377,6 +378,41 @@ class BoxScoreParser:
 # ~12-character tag scores about 0.93) and below the similarity of genuinely
 # different tags.
 NAME_MATCH_RATIO = 0.82
+
+
+def _orient_teams(box: BoxScore) -> None:
+    """Make 'us' the block the YOU marker is actually in.
+
+    Which block is yours is not fixed. The MyCareer post-game screen puts the
+    opponents on top; the Rec game-stats screen puts your own team there. Team
+    was being assigned from block order alone, so on a Rec screen every one of
+    your team's stats was filed under the opposition.
+
+    The screen already says which row is yours — that is what the green
+    triangle is for, and it is read for exactly this reason. So the marker
+    decides, and block order is only the starting guess. If no marker was
+    found, nothing is changed: a guess from position beats no answer, and it is
+    right half the time by construction.
+    """
+    you = next((p for p in box.players if p.is_you), None)
+    if you is None or you.team == "us":
+        return
+    for player in box.players:
+        player.team = "us" if player.team == "them" else "them"
+    box.totals = {("us" if team == "them" else "them"): row
+                  for team, row in box.totals.items()}
+    for row in box.totals.values():
+        row.team = "us" if row.team == "them" else "them"
+    box.checksum_failures = [
+        failure.replace("us/", "\0", 1).replace("them/", "us/", 1)
+               .replace("\0", "them/", 1)
+        for failure in box.checksum_failures
+    ]
+    box.unread_cells = [
+        cell.replace("us/", "\0", 1).replace("them/", "us/", 1)
+            .replace("\0", "them/", 1)
+        for cell in box.unread_cells
+    ]
 
 
 def resolve_names(box: BoxScore, roster: list[str]) -> dict[str, str]:
