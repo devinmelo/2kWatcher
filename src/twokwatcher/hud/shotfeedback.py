@@ -47,7 +47,8 @@ TIMING_VALUES = (
     "VERY EARLY", "VERY LATE", "EARLY", "LATE",
 )
 COVERAGE_VALUES = (
-    "WIDE OPEN", "OPEN", "LIGHT CONTEST", "HEAVY CONTEST", "SMOTHERED",
+    "WIDE OPEN", "OPEN", "LIGHT CONTEST", "SOLID CONTEST", "HEAVY CONTEST",
+    "SMOTHERED",
 )
 # Loose, because OCR mangles these; the vocabulary is small enough that a low
 # bar still separates its members from each other. Short terms need a higher
