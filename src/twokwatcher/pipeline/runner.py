@@ -9,13 +9,14 @@ later should mean registering another stage here, not restructuring this file.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+import threading
+from dataclasses import asdict, dataclass, field
 
 import numpy as np
 
 from ..capture import FrameSource
 from ..config import Config
-from ..hud import ScoreboardReader, ShotFeedbackReader
+from ..hud import BoxScoreParser, ScoreboardReader, ShotFeedbackReader
 from ..state import GameState, StateMachine
 from ..state.detectors import ScreenClassifier
 from .events import Event, EventBus
@@ -34,6 +35,7 @@ class RunnerStats:
     frames_sampled: int = 0
     transitions: int = 0
     shots: int = 0
+    box_scores: int = 0
     state_frames: dict[str, int] = field(default_factory=dict)
 
 
@@ -55,6 +57,7 @@ class Runner:
         self.classifier = ScreenClassifier(config)
         self.scoreboard = ScoreboardReader(config)
         self.shot_feedback = ShotFeedbackReader()
+        self.box_score = BoxScoreParser()
         self.machine = StateMachine()
         self.stats = RunnerStats()
 
@@ -62,6 +65,8 @@ class Runner:
         # clears. None of them is trustworthy alone.
         self._banner: list[np.ndarray] = []
         self._shot_reader_ready: bool | None = None
+        self._box_thread: threading.Thread | None = None
+        self._box_reader_ready: bool | None = None
 
         # How often to publish HUD crops for the UI. Encoding costs real time,
         # so this runs well below the sample rate — the crops are for a human
@@ -127,6 +132,8 @@ class Runner:
                 data={"previous": transition.previous.value,
                       "current": transition.current.value},
             ))
+            if transition.current is GameState.POST_GAME:
+                self._read_box_score(frame)
 
         # Everything below here is gated on being in a live game, which is the
         # whole reason the state machine is the first thing built.
@@ -147,6 +154,64 @@ class Runner:
 
         self._collect_shot_feedback(frame)
         _ = signals
+
+    def _read_box_score(self, frame) -> None:
+        """Parse the box score on a worker thread, once per entry to the screen.
+
+        This cannot run inline. A full parse is 130 cells against six OCR
+        configurations each, and each of those is a Tesseract subprocess:
+        measured at 98 seconds on this machine. In the frame loop that would
+        stall capture for a minute and a half and drop thousands of frames.
+
+        So the frame is copied and handed off, and the result arrives as an
+        event whenever it is ready. One parse runs at a time — the screen can
+        be reopened, and queueing them up would only pile work behind work.
+        """
+        if self._box_thread is not None and self._box_thread.is_alive():
+            return
+        if not self._box_score_ready():
+            return
+
+        image = frame.image.copy()
+        index, timestamp = frame.index, frame.timestamp
+
+        def work() -> None:
+            try:
+                box = self.box_score.parse(image)
+            except Exception:                               # noqa: BLE001
+                log.exception("Could not read the box score")
+                return
+            if not any(p.complete for p in box.players):
+                # The screen was detected but nothing came off it. Better to
+                # say nothing than to write ten empty rows.
+                log.info("Box score parsed but no rows were readable")
+                return
+            self.stats.box_scores += 1
+            self.bus.publish(Event(
+                kind="box_score", frame_index=index, video_ts=timestamp,
+                data={
+                    "players": [_stat_line(p) for p in box.players],
+                    "totals": {team: _stat_line(row)
+                               for team, row in box.totals.items()},
+                    "checksum_failures": list(box.checksum_failures),
+                    "unread_cells": list(box.unread_cells),
+                    "trustworthy": box.trustworthy,
+                },
+            ))
+
+        self._box_thread = threading.Thread(target=work, daemon=True,
+                                            name="boxscore")
+        self._box_thread.start()
+
+    def _box_score_ready(self) -> bool:
+        if self._box_reader_ready is None:
+            self._box_reader_ready = self.box_score.available()
+            if not self._box_reader_ready:
+                log.warning(
+                    "Tesseract not found — box scores will not be logged. "
+                    "Install it and restart to capture game stats."
+                )
+        return self._box_reader_ready
 
     def _collect_shot_feedback(self, frame) -> None:
         """Buffer a shot banner while it is up, and read it once it clears.
@@ -221,3 +286,11 @@ class Runner:
             data={"crops": crops, "frame": frame.image,
                   "frame_size": frame.size},
         ))
+
+
+def _stat_line(row) -> dict:
+    """One parsed row as plain data, with the non-stat flags dropped."""
+    line = asdict(row)
+    line.pop("is_you", None)
+    line.pop("is_matchup", None)
+    return line

@@ -118,6 +118,60 @@ class Database:
         )
         self.conn.commit()
 
+    def record_stat_line(
+        self, *, game_id: int, player_id: int, team: str, grade: str | None = None,
+        pts: int | None = None, reb: int | None = None, ast: int | None = None,
+        stl: int | None = None, blk: int | None = None, tov: int | None = None,
+        fgm: int | None = None, fga: int | None = None,
+        tpm: int | None = None, tpa: int | None = None,
+        ftm: int | None = None, fta: int | None = None,
+    ) -> None:
+        """Write one player's line for a game, replacing any earlier one.
+
+        The box score can be read more than once — 2K lets you open it mid-game
+        — so this upserts rather than inserts. A later read supersedes an
+        earlier one, but only field by field: a cell the parser declined this
+        time must not wipe a value it managed to read before.
+
+        FOULS has no column here. The full parse is kept as JSON on the
+        matching event, so nothing is lost, but the normalized table holds only
+        what the schema was built for.
+        """
+        self.conn.execute(
+            """
+            INSERT INTO game_players (game_id, player_id, team, grade, pts, reb,
+                                      ast, stl, blk, tov, fgm, fga, tpm, tpa,
+                                      ftm, fta)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(game_id, player_id) DO UPDATE SET
+                team  = excluded.team,
+                grade = COALESCE(excluded.grade, game_players.grade),
+                pts   = COALESCE(excluded.pts,   game_players.pts),
+                reb   = COALESCE(excluded.reb,   game_players.reb),
+                ast   = COALESCE(excluded.ast,   game_players.ast),
+                stl   = COALESCE(excluded.stl,   game_players.stl),
+                blk   = COALESCE(excluded.blk,   game_players.blk),
+                tov   = COALESCE(excluded.tov,   game_players.tov),
+                fgm   = COALESCE(excluded.fgm,   game_players.fgm),
+                fga   = COALESCE(excluded.fga,   game_players.fga),
+                tpm   = COALESCE(excluded.tpm,   game_players.tpm),
+                tpa   = COALESCE(excluded.tpa,   game_players.tpa),
+                ftm   = COALESCE(excluded.ftm,   game_players.ftm),
+                fta   = COALESCE(excluded.fta,   game_players.fta)
+            """,
+            (game_id, player_id, team, grade, pts, reb, ast, stl, blk, tov,
+             fgm, fga, tpm, tpa, ftm, fta),
+        )
+        self.conn.commit()
+
+    def stat_lines(self, game_id: int) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            "SELECT gp.*, p.gamertag FROM game_players gp"
+            " JOIN players p ON p.id = gp.player_id"
+            " WHERE gp.game_id = ? ORDER BY gp.team DESC, gp.pts DESC",
+            (game_id,),
+        ).fetchall()
+
     # --- events and logging ---------------------------------------------
 
     def log_event(

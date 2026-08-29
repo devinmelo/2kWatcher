@@ -101,6 +101,58 @@ class WatcherThread:
             parts.append(f"{distance:.0f}ft")
         self.live.note("shot", " / ".join(parts) or "unread")
 
+    def _log_box_score(self, event) -> None:
+        """Persist a parsed box score: the game, its roster, and every line.
+
+        Opens its own connection rather than borrowing the watcher's. The box
+        score is parsed on a worker thread — it takes about ninety seconds and
+        cannot hold up the frame loop — so this arrives off-thread, and SQLite
+        connections belong to the thread that made them. Doing it here is cheap
+        because a box score lands once per game screen, not once per frame.
+
+        The whole parse also goes onto the event as JSON. The normalized table
+        has no column for every stat 2K shows — fouls in particular — and this
+        screen is too expensive to read for anything it yielded to be discarded.
+        """
+        data = event.data
+        players = [p for p in data.get("players", []) if p.get("name")]
+        if not players:
+            return
+        try:
+            with Database(self.db_path) as db:
+                if self.game_id is None:
+                    self.game_id = db.start_game(
+                        self.session_id, video_path=str(self.video_path or ""))
+                db.log_event(game_id=self.game_id, kind="box_score",
+                             frame_index=event.frame_index,
+                             video_ts=event.video_ts, payload=data)
+
+                for line in players:
+                    player_id = db.upsert_player(line["name"])
+                    db.record_stat_line(
+                        game_id=self.game_id, player_id=player_id,
+                        team=line.get("team", "them"),
+                        **{k: line.get(k) for k in
+                           ("grade", "pts", "reb", "ast", "stl", "blk", "tov",
+                            "fgm", "fga", "tpm", "tpa", "ftm", "fta")},
+                    )
+
+                totals = data.get("totals") or {}
+                ours = (totals.get("us") or {}).get("pts")
+                theirs = (totals.get("them") or {}).get("pts")
+                if ours is not None and theirs is not None:
+                    db.end_game(self.game_id, score_us=ours, score_them=theirs)
+        except Exception:                                # noqa: BLE001
+            log.exception("Could not log a box score")
+            return
+
+        note = f"{len(players)} stat lines"
+        if not data.get("trustworthy", True):
+            flags = len(data.get("checksum_failures") or []) + \
+                len(data.get("unread_cells") or [])
+            note += f" ({flags} to review)"
+        self.live.note("box score", note)
+
     def _run(self) -> None:
         source_name = "file" if self.video_path else "virtualcam"
         bus = EventBus()
@@ -118,6 +170,7 @@ class WatcherThread:
                 # a shot with a null game_id is still a shot, and can be
                 # attributed later from the session's state log.
                 bus.subscribe("shot_feedback", lambda e: self._log_shot(db, e))
+                bus.subscribe("box_score", self._log_box_score)
                 bus.subscribe("state_change", lambda e: db.log_state(
                     self.session_id, e.data["previous"], e.data["current"],
                     e.frame_index, e.video_ts))
