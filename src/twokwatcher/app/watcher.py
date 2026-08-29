@@ -56,6 +56,9 @@ class WatcherThread:
         # frame set than as a database, because every parser still unwritten
         # is blocked on nobody having seen this HUD.
         self.collector = FrameCollector(collect_dir, enabled=collect)
+        # Set once games are opened and closed off the post-game screen; until
+        # then shots are logged against the session with a null game.
+        self.game_id: int | None = None
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
         self.session_id: int | None = None
@@ -79,6 +82,25 @@ class WatcherThread:
             self._thread.join(timeout=timeout)
         self.live.set_running(False)
 
+    def _log_shot(self, db, event) -> None:
+        """Persist one shot, and surface it in the UI as it happens."""
+        data = event.data
+        try:
+            db.log_event(
+                game_id=self.game_id, kind="shot_feedback",
+                frame_index=event.frame_index, video_ts=event.video_ts,
+                payload=data,
+            )
+        except Exception:                                # noqa: BLE001
+            # A failed write must not take the watcher down mid-game.
+            log.exception("Could not log a shot")
+            return
+        parts = [p for p in (data.get("timing"), data.get("coverage")) if p]
+        distance = data.get("distance_feet")
+        if distance is not None:
+            parts.append(f"{distance:.0f}ft")
+        self.live.note("shot", " / ".join(parts) or "unread")
+
     def _run(self) -> None:
         source_name = "file" if self.video_path else "virtualcam"
         bus = EventBus()
@@ -91,6 +113,11 @@ class WatcherThread:
             # SQLite connections are per-thread, so the watcher opens its own.
             with Database(self.db_path) as db:
                 self.session_id = db.start_session(source=source_name)
+                # Shots are the point of the whole exercise, so they are
+                # persisted even before games are being opened and closed —
+                # a shot with a null game_id is still a shot, and can be
+                # attributed later from the session's state log.
+                bus.subscribe("shot_feedback", lambda e: self._log_shot(db, e))
                 bus.subscribe("state_change", lambda e: db.log_state(
                     self.session_id, e.data["previous"], e.data["current"],
                     e.frame_index, e.video_ts))

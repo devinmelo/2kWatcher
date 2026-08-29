@@ -11,14 +11,21 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
+import numpy as np
+
 from ..capture import FrameSource
 from ..config import Config
-from ..hud import ScoreboardReader
+from ..hud import ScoreboardReader, ShotFeedbackReader
 from ..state import GameState, StateMachine
 from ..state.detectors import ScreenClassifier
 from .events import Event, EventBus
 
 log = logging.getLogger(__name__)
+
+# A banner is up for about a second. This is a generous ceiling on how many
+# frames of one are worth keeping, so a gate that sticks on cannot grow the
+# buffer without bound.
+MAX_BANNER_FRAMES = 40
 
 
 @dataclass
@@ -26,6 +33,7 @@ class RunnerStats:
     frames_seen: int = 0
     frames_sampled: int = 0
     transitions: int = 0
+    shots: int = 0
     state_frames: dict[str, int] = field(default_factory=dict)
 
 
@@ -46,8 +54,14 @@ class Runner:
         self.bus = bus or EventBus()
         self.classifier = ScreenClassifier(config)
         self.scoreboard = ScoreboardReader(config)
+        self.shot_feedback = ShotFeedbackReader()
         self.machine = StateMachine()
         self.stats = RunnerStats()
+
+        # Frames of the banner currently on screen, read together once it
+        # clears. None of them is trustworthy alone.
+        self._banner: list[np.ndarray] = []
+        self._shot_reader_ready: bool | None = None
 
         # How often to publish HUD crops for the UI. Encoding costs real time,
         # so this runs well below the sample rate — the crops are for a human
@@ -131,11 +145,62 @@ class Runner:
                       "shot_clock": reading.shot_clock},
             ))
 
-        # TODO (next): shot-feedback detection off the `shot_feedback` region.
-        # That is the highest-value signal in the project — every release logged
-        # with its timing verdict and outcome — and it needs the same glyph
-        # atlas treatment as the scoreboard, plus a template per verdict string.
+        self._collect_shot_feedback(frame)
         _ = signals
+
+    def _collect_shot_feedback(self, frame) -> None:
+        """Buffer a shot banner while it is up, and read it once it clears.
+
+        The banner is on screen for about a second — dozens of frames — and at
+        capture resolution no single one of them is reliable. So frames are
+        accumulated while the cheap presence gate holds, then read together by
+        consensus when it drops. That is also what keeps the cost sane: OCR
+        runs once per shot rather than ten times a second.
+        """
+        if not self._shot_feedback_ready():
+            return
+
+        if self.shot_feedback.present(frame.image):
+            # Cap the buffer: a gate stuck on must not grow without bound.
+            if len(self._banner) < MAX_BANNER_FRAMES:
+                self._banner.append(frame.image)
+            return
+
+        if not self._banner:
+            return
+        frames, self._banner = self._banner, []
+        try:
+            feedback = self.shot_feedback.read_event(frames)
+        except Exception:                                   # noqa: BLE001
+            log.exception("Could not read a shot banner")
+            return
+        if not feedback.any_read:
+            # Most events that reach here were a false trigger on the presence
+            # gate. Silence beats a row of nulls in the database.
+            return
+
+        self.stats.shots += 1
+        self.bus.publish(Event(
+            kind="shot_feedback",
+            frame_index=frame.index,
+            video_ts=frame.timestamp,
+            data={"timing": feedback.timing,
+                  "coverage": feedback.coverage,
+                  "distance_feet": feedback.distance_feet,
+                  "frames": len(frames),
+                  "unmatched": feedback.unmatched},
+        ))
+
+    def _shot_feedback_ready(self) -> bool:
+        """Whether the banner reader can run at all, checked once."""
+        if self._shot_reader_ready is None:
+            self._shot_reader_ready = self.shot_feedback.available()
+            if not self._shot_reader_ready:
+                log.warning(
+                    "Tesseract not found — shot feedback will not be logged. "
+                    "Install it and restart to capture shot timing."
+                )
+        return self._shot_reader_ready
 
     def _publish_preview(self, frame) -> None:
         """Publish the crops the parsers are working from.
