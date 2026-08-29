@@ -3,10 +3,13 @@
 # Coordinates are NORMALIZED (0.0 - 1.0) fractions of the frame, so the same
 # file works at 720p / 1080p / 1440p.
 #
-# These values are MEASURED from real Rec gameplay (NBA 2K, 16:9), not guessed.
-# They should be close on your capture, but verify them before trusting any
-# value: open `2kw app`, use the Calibrate panel, and check the crops shown
-# beside each parsed value.
+# These values are MEASURED from real Rec gameplay captured on this machine at
+# 1920x1080, not guessed. The earlier values came from a 1180x664 screen
+# recording that turned out to be cropped rather than scaled, so its fractions
+# did not transfer — score_away in particular landed between the clock and the
+# opponent's plate and read as flat grey. Verify before trusting any value:
+# open `2kw app`, use the Calibrate panel, and check the crops shown beside
+# each parsed value.
 #
 # IMPORTANT: Rec draws its scoreboard at the BOTTOM of the screen. Other modes
 # (Play Now, MyCareer games) use a different layout and need their own
@@ -22,29 +25,54 @@ capture:
 
 regions:
   # --- Rec bottom scoreboard ------------------------------------------------
-  # The whole scoreboard plate. Primary "are we in a live game?" signal.
-  # Measured edge density with the bar present: ~0.063-0.070.
-  scoreboard:    {x: 0.150, y: 0.850, w: 0.350, h: 0.130}
+  # Primary "are we in a live game?" signal, and the anchor every field below
+  # is measured from. The plate itself runs x[307:1608] y[942:1063] on a 1080p
+  # frame and its position is stable to the pixel across a full game — but this
+  # region deliberately STOPS AT x=910, before the panel on the plate's right
+  # third that rotates through player stats every ~6 seconds. Including it made
+  # the detector flap: edge density collapsed during each cross-fade, dropping
+  # under the threshold for a sample and knocking the state machine out of the
+  # game. Stopping short keeps both logos, both scores, the centre mark, the
+  # clock, quarter and shot clock — all static furniture — and holds edge
+  # density in 0.064-0.074 against a 0.050 threshold.
+  #
+  # Do not switch this to a template match on the centre mark: it reads
+  # "THE REC" in Rec games and "CREWS" in Crews games.
+  scoreboard:    {x: 0.1599, y: 0.8722, w: 0.3141, h: 0.1120}
 
-  # Your team's score sits left of the REC logo, the opponent's right of it.
-  # Left is dark-on-red and reads less reliably than right, which is red-on-white.
-  score_home:    {x: 0.235, y: 0.900, w: 0.037, h: 0.042}
-  score_away:    {x: 0.362, y: 0.900, w: 0.040, h: 0.042}
+  # Your team's score sits left of the REC logo, the opponent's right of it, on
+  # a white plate. Both are drawn in team colours — green here, dark-on-red in
+  # other footage — so nothing downstream may key on colour. Both boxes carry
+  # room to the left for a third digit.
+  score_home:    {x: 0.2190, y: 0.9130, w: 0.0594, h: 0.0352}
+  score_away:    {x: 0.3521, y: 0.9065, w: 0.0490, h: 0.0417}
 
-  # Game clock, under the REC logo. Wide enough for "12:00" as well as "6.9",
-  # which is what it shows under ten seconds.
-  game_clock:    {x: 0.292, y: 0.905, w: 0.046, h: 0.030}
-  quarter:       {x: 0.286, y: 0.943, w: 0.029, h: 0.029}
+  # Game clock, under the REC logo. Wide enough for "3:34" as well as "4.8",
+  # which is what it shows under a minute.
+  game_clock:    {x: 0.2943, y: 0.9167, w: 0.0443, h: 0.0287}
+  quarter:       {x: 0.2896, y: 0.9509, w: 0.0229, h: 0.0231}
+
+  # Shot clock, in its own boxed panel right of the quarter. Blank between
+  # possessions, which reads as None rather than zero.
+  shot_clock:    {x: 0.3260, y: 0.9509, w: 0.0198, h: 0.0231}
+
+  # The panel on the plate's right third, which rotates through every player on
+  # the floor with their running stat line. Measured at x[1150:1608] y[960:1052]
+  # on a 1080p frame. The parser discovers its own columns inside this box, so
+  # only the outer bounds matter here — but it must not be trimmed, because the
+  # two-player layout uses the full width.
+  player_panel:  {x: 0.5990, y: 0.8889, w: 0.2385, h: 0.0852}
 
   # --- Shot feedback --------------------------------------------------------
   # Top-centre banner: TIMING / COVERAGE / DISTANCE. Deliberately generous —
-  # the banner is centred and its width changes with its panel count.
+  # the banner is centred and its width changes with its panel count. Verified
+  # unchanged at 1080p: it holds both the one-panel and three-panel forms.
   shot_feedback: {x: 0.300, y: 0.016, w: 0.440, h: 0.064}
 
   # --- Your player, top right ----------------------------------------------
-  # Teammate grade, and the PTS / REB / AST / DREB strip beside it.
-  teammate_grade: {x: 0.828, y: 0.028, w: 0.030, h: 0.040}
-  my_stats:       {x: 0.862, y: 0.020, w: 0.125, h: 0.050}
+  # Teammate grade, and the PTS / REB / AST / FLS strip beside it.
+  teammate_grade: {x: 0.828, y: 0.039, w: 0.030, h: 0.039}
+  my_stats:       {x: 0.862, y: 0.035, w: 0.125, h: 0.046}
 
   # --- Post-game ------------------------------------------------------------
   # The box score parser carries its own measured table layout, so this is only
