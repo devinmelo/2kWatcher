@@ -25,6 +25,7 @@ class FrameSignals:
 
     scoreboard_present: bool
     scoreboard_edge_density: float
+    scoreboard_dark_fraction: float
     mean_luma: float
     clock_changed: bool
 
@@ -38,22 +39,35 @@ class ScreenClassifier:
     class keeps a little history rather than being a pure function.
     """
 
-    def __init__(self, config: Config, *, edge_threshold: float = 0.045) -> None:
+    def __init__(self, config: Config, *, edge_threshold: float = 0.050,
+                 dark_fraction_range: tuple[float, float] = (0.35, 0.88)) -> None:
         self.config = config
         self.edge_threshold = edge_threshold
+        # Edge density alone is not enough: a busy menu can be just as detailed
+        # as a scoreboard, and false-positives there put the state machine in a
+        # game that is not happening. The scoreboard is specifically a DARK
+        # PLATE carrying bright text, which menus and gameplay both are not.
+        # Measured on real Rec footage: 63-65% of the plate's pixels are dark.
+        self.dark_fraction_range = dark_fraction_range
         self._last_clock_crop: np.ndarray | None = None
         self._clock_static_samples = 0
 
     def signals(self, image: np.ndarray) -> FrameSignals:
         scoreboard = self.config.region("scoreboard").crop(image)
         edge_density = _edge_density(scoreboard)
+        dark_fraction = _dark_fraction(scoreboard)
 
         clock_crop = self.config.region("game_clock").crop(image)
         clock_changed = self._clock_changed(clock_crop)
 
+        low, high = self.dark_fraction_range
+        present = (edge_density >= self.edge_threshold
+                   and low <= dark_fraction <= high)
+
         return FrameSignals(
-            scoreboard_present=edge_density >= self.edge_threshold,
+            scoreboard_present=present,
             scoreboard_edge_density=edge_density,
+            scoreboard_dark_fraction=dark_fraction,
             mean_luma=float(np.mean(image)) if image.size else 0.0,
             clock_changed=clock_changed,
         )
@@ -101,6 +115,18 @@ class ScreenClassifier:
         if previous is None:
             return False
         return float(np.mean(cv2.absdiff(small, previous))) > 2.0
+
+
+def _dark_fraction(crop: np.ndarray, cutoff: int = 70) -> float:
+    """Share of a crop's pixels that are dark.
+
+    Separates the scoreboard's near-black plate from a bright menu with
+    comparable edge detail.
+    """
+    if crop.size == 0:
+        return 0.0
+    gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+    return float(np.mean(gray < cutoff))
 
 
 def _edge_density(crop: np.ndarray) -> float:

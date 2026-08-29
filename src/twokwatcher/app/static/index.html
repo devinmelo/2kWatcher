@@ -129,6 +129,7 @@
         <div class="stat"><div class="k">Sampled</div><div class="v" id="sampled">0</div></div>
         <div class="stat"><div class="k">In state</div><div class="v" id="dwell">0s</div></div>
         <div class="stat"><div class="k">Frames collected</div><div class="v" id="collected">0</div></div>
+        <div class="stat"><div class="k">Scoreboard signal</div><div class="v" id="signals" style="font-size:12px">—</div></div>
       </div>
       <div class="body" style="padding-top:0">
         <div class="chips" id="collectchips"></div>
@@ -261,6 +262,9 @@ async function poll() {
   if (s.error) { banner.style.display = 'block'; banner.textContent = s.error; }
   else banner.style.display = 'none';
 
+  const sg = s.signals || {};
+  $('signals').textContent = sg.edges === undefined ? '—'
+    : `edges ${sg.edges}  dark ${sg.dark}  luma ${sg.luma}  clock ${sg.clock_moved ? 'moving' : 'still'}`;
   $('collected').textContent = (s.collected_total || 0).toLocaleString();
   $('collectchips').innerHTML = Object.entries(s.collected || {})
     .sort((a, b) => b[1] - a[1])

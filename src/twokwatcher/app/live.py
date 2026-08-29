@@ -41,6 +41,7 @@ class LiveState:
         self._preview_size: tuple[int, int] = (0, 0)
         self._full_frame: str | None = None
         self.collected: dict[str, int] = {}
+        self.signals: dict = {}
 
     # --- writes, from the watcher thread ---------------------------------
 
@@ -48,12 +49,22 @@ class LiveState:
         bus.subscribe("state_change", self._on_state)
         bus.subscribe("scoreboard", self._on_scoreboard)
         bus.subscribe("preview", self._on_preview)
+        bus.subscribe("signals", self._on_signals)
 
     def _on_state(self, event: Event) -> None:
         with self._lock:
             self.state = event.data["current"]
             self.state_since = time.monotonic()
             self._push(event, f"{event.data['previous']} → {event.data['current']}")
+
+    def _on_signals(self, event: Event) -> None:
+        """Keep the raw classifier measurements, so a wrong state is diagnosable.
+
+        Without these, "why does it think this is a replay?" can only be
+        answered by reproducing the exact screen.
+        """
+        with self._lock:
+            self.signals = dict(event.data)
 
     def _on_scoreboard(self, event: Event) -> None:
         with self._lock:
@@ -152,6 +163,7 @@ class LiveState:
                 "events": list(self._events)[:60],
                 "previews": dict(self._previews),
                 "frame_size": list(self._preview_size),
+                "signals": dict(self.signals),
                 "collected": dict(self.collected),
                 "collected_total": sum(self.collected.values()),
             }

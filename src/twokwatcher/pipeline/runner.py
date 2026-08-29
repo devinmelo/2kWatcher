@@ -92,6 +92,15 @@ class Runner:
         key = observed.value
         self.stats.state_frames[key] = self.stats.state_frames.get(key, 0) + 1
 
+        self.bus.publish(Event(
+            kind="signals", frame_index=frame.index, video_ts=frame.timestamp,
+            data={"observed": observed.value,
+                  "edges": round(signals.scoreboard_edge_density, 4),
+                  "dark": round(signals.scoreboard_dark_fraction, 3),
+                  "luma": round(signals.mean_luma, 1),
+                  "clock_moved": signals.clock_changed},
+        ))
+
         transition = self.machine.update(
             observed, timestamp=frame.timestamp, frame_index=frame.index
         )
