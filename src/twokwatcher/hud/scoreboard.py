@@ -109,25 +109,39 @@ class ScoreboardReader:
     def _read_text(self, image: np.ndarray, region: str) -> str | None:
         """Segment a field into glyphs and match each against the atlas."""
         binary = preprocess_digits(self.config.region(region).crop(image))
-        glyphs = _segment_glyphs(binary)
-        if not glyphs:
-            return None
+        return match_glyphs(binary, self.atlas)
 
-        out = []
-        for glyph in glyphs:
-            best_score, best_char = 0.0, None
-            for char, template in self.atlas.items():
-                resized = cv2.resize(glyph, (template.shape[1], template.shape[0]))
-                score = float(
-                    cv2.matchTemplate(resized, template, cv2.TM_CCOEFF_NORMED).max()
-                )
-                if score > best_score:
-                    best_score, best_char = score, char
-            # Below this, we are matching noise. Refusing to read beats guessing.
-            if best_char is None or best_score < 0.55:
-                return None
-            out.append(best_char)
-        return "".join(out)
+
+# Below this a glyph is being matched against noise, and refusing to read beats
+# guessing. Shared by every atlas-backed field, wherever it is drawn.
+GLYPH_MATCH_CUTOFF = 0.55
+
+
+def match_glyphs(binary: np.ndarray, atlas: dict[str, np.ndarray], *,
+                 cutoff: float = GLYPH_MATCH_CUTOFF) -> str | None:
+    """Segment a preprocessed field into glyphs and match each to the atlas.
+
+    Returns None if any glyph fails to match convincingly: a field read as
+    "1?" is worth nothing, so a partial read is treated as no read at all.
+    """
+    glyphs = _segment_glyphs(binary)
+    if not glyphs:
+        return None
+
+    out = []
+    for glyph in glyphs:
+        best_score, best_char = 0.0, None
+        for char, template in atlas.items():
+            resized = cv2.resize(glyph, (template.shape[1], template.shape[0]))
+            score = float(
+                cv2.matchTemplate(resized, template, cv2.TM_CCOEFF_NORMED).max()
+            )
+            if score > best_score:
+                best_score, best_char = score, char
+        if best_char is None or best_score < cutoff:
+            return None
+        out.append(best_char)
+    return "".join(out)
 
 
 def _segment_glyphs(binary: np.ndarray, min_area: int = 20) -> list[np.ndarray]:
