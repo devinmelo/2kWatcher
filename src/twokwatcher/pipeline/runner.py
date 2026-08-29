@@ -289,8 +289,10 @@ class Runner:
 
 
 def _stat_line(row) -> dict:
-    """One parsed row as plain data, with the non-stat flags dropped."""
-    line = asdict(row)
-    line.pop("is_you", None)
-    line.pop("is_matchup", None)
-    return line
+    """One parsed row as plain data.
+
+    is_you is carried through deliberately. It is the only thing on the screen
+    that says which of the ten rows is yours, and it is what lets a shot be
+    attributed to a player rather than filed against nobody.
+    """
+    return asdict(row)

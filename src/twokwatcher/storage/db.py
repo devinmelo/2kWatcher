@@ -85,6 +85,45 @@ class Database:
         ).fetchone()
         return row["id"]
 
+    def me(self) -> sqlite3.Row | None:
+        """The player this capture belongs to, if one has been identified."""
+        return self.conn.execute(
+            "SELECT * FROM players WHERE is_me = 1 ORDER BY last_seen DESC"
+        ).fetchone()
+
+    def attribute_unassigned_shots(self, player_id: int) -> int:
+        """Attach a player to shots that were logged before we knew who you were.
+
+        Shot feedback grades your own release, so every logged shot is yours —
+        but the name is only learned from a box score, which may not arrive
+        until well into the session. Rather than drop those shots or guess,
+        they are written unattributed and claimed once the identity is known.
+        """
+        cur = self.conn.execute(
+            "UPDATE events SET player_id = ?"
+            " WHERE kind = 'shot_feedback' AND player_id IS NULL",
+            (player_id,),
+        )
+        self.conn.commit()
+        return cur.rowcount
+
+    def shots(self, player_id: int | None = None,
+              limit: int = 200) -> list[sqlite3.Row]:
+        """Logged shots, newest first, optionally for one player."""
+        if player_id is None:
+            return self.conn.execute(
+                "SELECT e.*, p.gamertag FROM events e"
+                " LEFT JOIN players p ON p.id = e.player_id"
+                " WHERE e.kind = 'shot_feedback'"
+                " ORDER BY e.id DESC LIMIT ?", (limit,),
+            ).fetchall()
+        return self.conn.execute(
+            "SELECT e.*, p.gamertag FROM events e"
+            " LEFT JOIN players p ON p.id = e.player_id"
+            " WHERE e.kind = 'shot_feedback' AND e.player_id = ?"
+            " ORDER BY e.id DESC LIMIT ?", (player_id, limit),
+        ).fetchall()
+
     def roster(self) -> list[sqlite3.Row]:
         return self.conn.execute(
             "SELECT * FROM players ORDER BY is_me DESC, is_friend DESC, gamertag"
