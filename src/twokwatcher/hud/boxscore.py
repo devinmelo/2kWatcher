@@ -75,8 +75,14 @@ COUNT_COLUMNS = ("pts", "reb", "ast", "stl", "blk", "fouls", "tov")
 # excluded because 2K reports team totals there, not a sum of the rows.
 CHECKSUM_COLUMNS = ("pts", "reb", "ast", "stl", "blk", *FRACTION_COLUMNS)
 
-COUNT_RE = re.compile(r"^\d{1,3}$")
-FRACTION_RE = re.compile(r"^\d{1,3}/\d{1,3}$")
+# 2K never pads a stat, so a leading zero is not a number this screen can be
+# showing — it is Tesseract appending a phantom digit to a lone '0', which it
+# does often enough to survive the vote. Rejecting the shape lets the correct
+# readings win instead of averaging into a wrong one: a clean '0' was coming
+# back as '07' and reaching the database as 7.
+_COUNT = r"(?:0|[1-9]\d{0,2})"
+COUNT_RE = re.compile(rf"^{_COUNT}$")
+FRACTION_RE = re.compile(rf"^{_COUNT}/{_COUNT}$")
 GRADE_RE = re.compile(r"^[ABCDF][+-]?$")
 # Gamertags are alphanumerics plus a few separators; anything else is OCR noise.
 GAMERTAG_RE = re.compile(r"[^A-Za-z0-9 _.\-]")
