@@ -1,13 +1,16 @@
-"""Attributing shots to the player who took them.
+"""Who a logged shot belongs to.
 
-Shot feedback grades your own release — 2K does not show it for a teammate's
-shot or an opponent's, because you did not release anything. So every logged
-shot is yours, and the work is not detecting a shooter but recording which
-gamertag "yours" refers to.
+Shots are logged without a player, and that is deliberate rather than
+unfinished. 2K draws the feedback banner for every shot in the game, not only
+the one you took, and nothing on or near the banner names the shooter — it
+carries TIMING, COVERAGE and DISTANCE and nothing else. The only thing that
+identifies a shooter is who had the ball when it went up, which needs the
+tracker that does not exist yet.
 
-That name comes from one place: the green triangle beside your row on the box
-score. Until a box score has been read, shots are written unattributed rather
-than guessed at, and claimed afterwards.
+So the identity that IS readable gets recorded — the box score's green triangle
+says which roster row is yours, and that is stored on players.is_me — but it is
+not used to claim shots. Attributing every banner to the owner of the capture
+would not be recording data, it would be inventing it.
 """
 
 import pytest
@@ -59,7 +62,7 @@ def watcher(tmp_path):
 
 
 def test_the_you_marker_survives_into_the_event():
-    """It was being stripped, which left nothing to attribute shots with."""
+    """The parser reads it; the payload must not throw it away."""
     data = a_box_score().data
     assert data["players"][0]["is_you"] is True
     assert all(p["is_you"] is False for p in data["players"][1:])
@@ -78,39 +81,42 @@ def test_only_your_row_is_marked_as_you(watcher):
     with Database(watcher.db_path) as db:
         flagged = [r["gamertag"] for r in db.roster() if r["is_me"]]
         assert flagged == ["Lil Knotty"]
+        roster = {r["gamertag"]: r["is_me"] for r in db.roster()}
+        assert roster["mate1"] == 0
+        assert roster["opp0"] == 0
 
 
-def test_shots_after_a_box_score_carry_the_player(watcher):
+def test_shots_are_logged_without_a_shooter(watcher):
+    """The banner shows for everyone's shots, and never says whose it was."""
     watcher._log_box_score(a_box_score())
     with Database(watcher.db_path) as db:
         watcher._log_shot(db, a_shot())
         shots = db.shots()
         assert len(shots) == 1
-        assert shots[0]["gamertag"] == "Lil Knotty"
+        assert shots[0]["player_id"] is None
 
 
-def test_shots_before_a_box_score_are_claimed_afterwards(watcher):
-    """A session usually logs shots long before the first box score."""
+def test_knowing_who_you_are_does_not_claim_the_shots(watcher):
+    """Even once identity is known, a banner is not evidence you took it."""
     with Database(watcher.db_path) as db:
         watcher._log_shot(db, a_shot())
         watcher._log_shot(db, a_shot(timing="LATE"))
-        assert [s["player_id"] for s in db.shots()] == [None, None]
 
     watcher._log_box_score(a_box_score())
 
     with Database(watcher.db_path) as db:
-        shots = db.shots()
-        assert len(shots) == 2
-        assert all(s["gamertag"] == "Lil Knotty" for s in shots)
+        assert watcher.me_player_id is not None
+        assert [s["player_id"] for s in db.shots()] == [None, None]
 
 
-def test_shots_can_be_selected_for_one_player(watcher):
+def test_shots_can_be_queried_by_player_once_one_is_known(watcher):
+    """The query path is ready for when a shooter can actually be identified."""
     watcher._log_box_score(a_box_score())
     with Database(watcher.db_path) as db:
         watcher._log_shot(db, a_shot())
         me = db.me()
-        assert len(db.shots(player_id=me["id"])) == 1
-        assert db.shots(player_id=me["id"] + 999) == []
+        assert db.shots(player_id=me["id"]) == []
+        assert len(db.shots()) == 1
 
 
 def test_a_known_player_is_remembered_across_sessions(tmp_path):
@@ -121,20 +127,6 @@ def test_a_known_player_is_remembered_across_sessions(tmp_path):
         first.session_id = db.start_session(source="test")
     first._log_box_score(a_box_score())
 
-    second = WatcherThread(Config.load(), LiveState(), db_path, collect=False)
     with Database(db_path) as db:
         known = db.me()
-        assert known is not None
-        second.me_player_id = known["id"]
-        second.session_id = db.start_session(source="test")
-        second._log_shot(db, a_shot())
-        assert db.shots()[0]["gamertag"] == "Lil Knotty"
-
-
-def test_teammates_are_not_marked_as_you(watcher):
-    """Only the row behind the green triangle is yours."""
-    watcher._log_box_score(a_box_score())
-    with Database(watcher.db_path) as db:
-        roster = {r["gamertag"]: r["is_me"] for r in db.roster()}
-        assert roster["mate1"] == 0
-        assert roster["opp0"] == 0
+        assert known is not None and known["gamertag"] == "Lil Knotty"

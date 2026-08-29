@@ -91,22 +91,6 @@ class Database:
             "SELECT * FROM players WHERE is_me = 1 ORDER BY last_seen DESC"
         ).fetchone()
 
-    def attribute_unassigned_shots(self, player_id: int) -> int:
-        """Attach a player to shots that were logged before we knew who you were.
-
-        Shot feedback grades your own release, so every logged shot is yours —
-        but the name is only learned from a box score, which may not arrive
-        until well into the session. Rather than drop those shots or guess,
-        they are written unattributed and claimed once the identity is known.
-        """
-        cur = self.conn.execute(
-            "UPDATE events SET player_id = ?"
-            " WHERE kind = 'shot_feedback' AND player_id IS NULL",
-            (player_id,),
-        )
-        self.conn.commit()
-        return cur.rowcount
-
     def shots(self, player_id: int | None = None,
               limit: int = 200) -> list[sqlite3.Row]:
         """Logged shots, newest first, optionally for one player."""

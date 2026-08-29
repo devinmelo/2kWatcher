@@ -59,8 +59,8 @@ class WatcherThread:
         # Set once games are opened and closed off the post-game screen; until
         # then shots are logged against the session with a null game.
         self.game_id: int | None = None
-        # Who the shot feedback belongs to. Learned from the box score's YOU
-        # marker, or carried over from a previous session's roster.
+        # Which roster row is yours, from the box score's YOU marker. Not
+        # currently used to attribute shots — see _log_shot.
         self.me_player_id: int | None = None
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
@@ -85,28 +85,15 @@ class WatcherThread:
             self._thread.join(timeout=timeout)
         self.live.set_running(False)
 
-    def _claim_shots(self, db, player_id: int) -> None:
-        """Adopt this player as the shooter, and back-fill earlier shots.
-
-        Shot feedback grades your own release, so every shot logged in a
-        session is yours — but the gamertag is only learned from a box score,
-        which may not arrive until well into it. Shots before that point are
-        written unattributed rather than guessed at, and claimed here.
-        """
-        if self.me_player_id == player_id:
-            return
-        self.me_player_id = player_id
-        claimed = db.attribute_unassigned_shots(player_id)
-        if claimed:
-            self.live.note("shots", f"attributed {claimed} to this player")
-
     def _log_shot(self, db, event) -> None:
         """Persist one shot, and surface it in the UI as it happens."""
         data = event.data
         try:
             db.log_event(
+                # No player_id. The banner shows for every shot in the game,
+                # not just yours, and nothing on it names the shooter — so
+                # attributing these would be inventing data, not recording it.
                 game_id=self.game_id, kind="shot_feedback",
-                player_id=self.me_player_id,
                 frame_index=event.frame_index, video_ts=event.video_ts,
                 payload=data,
             )
@@ -153,7 +140,7 @@ class WatcherThread:
                     player_id = db.upsert_player(
                         line["name"], is_me=bool(line.get("is_you")))
                     if line.get("is_you"):
-                        self._claim_shots(db, player_id)
+                        self.me_player_id = player_id
                     db.record_stat_line(
                         game_id=self.game_id, player_id=player_id,
                         team=line.get("team", "them"),
