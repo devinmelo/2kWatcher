@@ -40,6 +40,19 @@ log = logging.getLogger(__name__)
 # A '/' rendered in the box score font, normalized to GLYPH_HEIGHT, harvested
 # from a real capture. Used only to locate the slash inside a fraction cell.
 SLASH_TEMPLATE_PATH = Path(__file__).parent / "glyphs" / "slash.png"
+HEADER_TEMPLATE_PATH = Path(__file__).parent / "glyphs" / "boxscore_header.png"
+# Where the column-header row is looked for. Deliberately tall: the table sits
+# at different heights on the post-game recap and the in-game overlay, and a
+# band pinned to one of them turns a 0.93 match into a 0.43 one.
+HEADER_SEARCH = (0.17, 0.60)
+# This runs on every sampled frame, so it is matched at half resolution: 4.4x
+# faster (16.6ms to 3.8ms per frame) and the separation barely moves. Going
+# further does start to erode it.
+HEADER_DOWNSCALE = 2
+# Measured over 157 frames from three sessions and two game modes: 15 box
+# score screens scored 0.8857 and above at this scale, every other frame 0.4031
+# and below. The threshold sits inside that gap rather than at either edge.
+HEADER_MATCH_THRESHOLD = 0.70
 GLYPH_HEIGHT = 24
 SLASH_MATCH_THRESHOLD = 0.45
 
@@ -68,6 +81,12 @@ COLUMNS: dict[str, tuple[float, float]] = {
     "tp":    (0.8115, 0.8656),
     "ft":    (0.8672, 0.9177),
 }
+
+# The header strip spans exactly the stat columns, so it is derived from them
+# rather than restated: the template was cut to this span and the two must not
+# drift apart.
+HEADER_X = (min(a for a, _ in COLUMNS.values()),
+            max(b for _, b in COLUMNS.values()))
 
 FRACTION_COLUMNS = ("fg", "tp", "ft")
 COUNT_COLUMNS = ("pts", "reb", "ast", "stl", "blk", "fouls", "tov")
@@ -498,6 +517,69 @@ def _erase_platform_icon(crop: np.ndarray) -> tuple[np.ndarray, bool]:
     # not — the leftover rectangle then reads as a stray underscore.
     x, _y, w, _h = icon
     return crop[:, x + w + 2:], True
+
+
+_HEADER_CACHE: np.ndarray | None = None
+_HEADER_LOADED = False
+
+
+def _header_template() -> np.ndarray | None:
+    global _HEADER_CACHE, _HEADER_LOADED
+    if not _HEADER_LOADED:
+        _HEADER_LOADED = True
+        if HEADER_TEMPLATE_PATH.exists():
+            _HEADER_CACHE = cv2.imread(str(HEADER_TEMPLATE_PATH),
+                                       cv2.IMREAD_GRAYSCALE)
+        else:
+            log.warning("No header template at %s; the box score screen "
+                        "cannot be detected", HEADER_TEMPLATE_PATH)
+    return _HEADER_CACHE
+
+
+def header_score(image: np.ndarray) -> float:
+    """How strongly this frame shows a box score's column-header row.
+
+    Both screens that draw the table — the MyCareer post-game recap and the
+    Rec/Crews mid-game GAME STATS overlay — head their columns with the same
+    strip of text in the same font: GRD PTS REB AST STL BLK FOULS TO FGM/FGA
+    3PM/3PA FTM/FTA. That strip is what makes the screen identifiable rather
+    than merely busy, and density heuristics are not: measured across 157
+    frames, a box score and a crowded gameplay frame have indistinguishable
+    text-line counts and edge densities.
+
+    The template slides vertically rather than being pinned to a row, because
+    the table sits a few pixels lower on some screens and a fixed band turns a
+    0.93 match into a 0.43 one.
+
+    Returns -1.0 when there is no template to match against.
+    """
+    template = _header_template()
+    if template is None or image is None or image.size == 0:
+        return -1.0
+    h, w = image.shape[:2]
+    strip = cv2.cvtColor(
+        image[int(HEADER_SEARCH[0] * h):int(HEADER_SEARCH[1] * h),
+              int(HEADER_X[0] * w):int(HEADER_X[1] * w)],
+        cv2.COLOR_BGR2GRAY)
+    if strip.shape[1] != template.shape[1]:
+        template = cv2.resize(template, (strip.shape[1], template.shape[0]))
+    if HEADER_DOWNSCALE > 1:
+        strip = cv2.resize(strip, (strip.shape[1] // HEADER_DOWNSCALE,
+                                   max(1, strip.shape[0] // HEADER_DOWNSCALE)))
+        template = cv2.resize(template,
+                              (template.shape[1] // HEADER_DOWNSCALE,
+                               max(1, template.shape[0] // HEADER_DOWNSCALE)))
+    if strip.size == 0 or template.size == 0:
+        return -1.0
+    if strip.shape[0] < template.shape[0] or strip.shape[1] < template.shape[1]:
+        return -1.0
+    return float(cv2.matchTemplate(strip, template,
+                                   cv2.TM_CCOEFF_NORMED).max())
+
+
+def is_box_score(image: np.ndarray) -> bool:
+    """Whether this frame is showing the box score table."""
+    return header_score(image) >= HEADER_MATCH_THRESHOLD
 
 
 _SLASH_CACHE: np.ndarray | None = None

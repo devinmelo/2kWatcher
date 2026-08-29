@@ -16,6 +16,7 @@ import cv2
 import numpy as np
 
 from ..config import Config
+from ..hud.boxscore import is_box_score
 from .machine import GameState
 
 
@@ -79,10 +80,20 @@ class ScreenClassifier:
         if sig.mean_luma < 12.0:
             return GameState.LOADING, sig
 
+        # Checked before the scoreboard signal, not after it. 2K draws the box
+        # score as an overlay that can be opened mid-game, and the scoreboard
+        # plate stays visible underneath — so six of the box screens on disk
+        # read as scoreboard_present and would never reach a check placed in
+        # the menu branch.
+        #
+        # Note the text-row-density idea that used to be sketched here does not
+        # work: measured over 157 frames a box score and a crowded gameplay
+        # frame have indistinguishable line counts. The column-header row does
+        # separate them, and by a wide margin.
+        if is_box_score(image):
+            return GameState.POST_GAME, sig
+
         if not sig.scoreboard_present:
-            # TODO: separate MENU from POST_GAME. The box score screen has a
-            # distinctive dense-text layout; a template match on the header, or
-            # a simple text-row-density heuristic, should split them cleanly.
             return GameState.MENU, sig
 
         # Scoreboard is up, so we are in a game. A moving clock means live ball.
