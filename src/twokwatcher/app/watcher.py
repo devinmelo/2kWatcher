@@ -9,6 +9,7 @@ the UI from one that is idle.
 
 from __future__ import annotations
 
+import difflib
 import logging
 import threading
 
@@ -20,6 +21,20 @@ from .collect import FrameCollector
 from .live import LiveState
 
 log = logging.getLogger(__name__)
+
+# How close a freshly read gamertag must be to one already on record
+# to be treated as the same player. Gamertags are long, so a strict
+# bar still absorbs the glyph confusions OCR makes on them.
+NAME_MATCH_RATIO = 0.82
+
+
+def _closest_known(name, known):
+    """The registry spelling of a gamertag, if it is already on record."""
+    if not name or not known or name in known:
+        return name
+    matches = difflib.get_close_matches(name, known, n=1,
+                                        cutoff=NAME_MATCH_RATIO)
+    return matches[0] if matches else name
 
 
 class StoppableRunner(Runner):
@@ -133,12 +148,24 @@ class WatcherThread:
                              frame_index=event.frame_index,
                              video_ts=event.video_ts, payload=data)
 
+                # Snap gamertags onto ones already on record before they are
+                # written. The box score is read several times a game and OCR
+                # spells a name slightly differently each time — one session
+                # turned a single opponent into "Juju Watkin5", "Juju Watkin5S"
+                # and "Juju WatkinS", three roster entries and three stat lines
+                # for one player. The registry is what settles it, which is the
+                # job resolve_names was written for.
+                known = [row["gamertag"] for row in db.roster()]
+                for line in players:
+                    line["name"] = _closest_known(line["name"], known)
+
                 for line in players:
                     # The green triangle on the screen is what says which row
                     # is yours, and it is the only thing that does. Recording
                     # it here is what lets shots be attributed to a player.
                     player_id = db.upsert_player(
                         line["name"], is_me=bool(line.get("is_you")))
+                    known.append(line["name"])
                     if line.get("is_you"):
                         self.me_player_id = player_id
                     db.record_stat_line(

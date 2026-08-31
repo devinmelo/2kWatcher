@@ -130,3 +130,36 @@ def test_a_known_player_is_remembered_across_sessions(tmp_path):
     with Database(db_path) as db:
         known = db.me()
         assert known is not None and known["gamertag"] == "Lil Knotty"
+
+
+def test_ocr_spellings_of_one_gamertag_become_one_player(watcher):
+    """A live session turned one opponent into three roster entries.
+
+    The box score is read several times a game and OCR spells a name slightly
+    differently each time; without resolution each spelling became its own
+    player and its own stat line.
+    """
+    from twokwatcher.app.watcher import _closest_known
+
+    first = a_box_score()
+    first.data["players"][5]["name"] = "Juju Watkin5"
+    watcher._log_box_score(first)
+
+    second = a_box_score()
+    second.data["players"][5]["name"] = "Juju Watkin5S"
+    watcher._log_box_score(second)
+
+    third = a_box_score()
+    third.data["players"][5]["name"] = "Juju WatkinS"
+    watcher._log_box_score(third)
+
+    with Database(watcher.db_path) as db:
+        tags = [r["gamertag"] for r in db.roster()]
+        assert sorted(t for t in tags if "Juju" in t) == ["Juju Watkin5"]
+        assert len(db.stat_lines(watcher.game_id)) == 10
+
+
+def test_a_genuinely_different_name_is_not_merged():
+    from twokwatcher.app.watcher import _closest_known
+    assert _closest_known("TotallyDifferent", ["Juju Watkin5"]) == "TotallyDifferent"
+    assert _closest_known("njsimas456", ["Juju Watkin5", "Lil Knotty"]) == "njsimas456"
