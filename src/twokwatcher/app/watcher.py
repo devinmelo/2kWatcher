@@ -100,15 +100,24 @@ class WatcherThread:
             self._thread.join(timeout=timeout)
         self.live.set_running(False)
 
+    def _player_id_for(self, db, gamertag):
+        """The roster id for a named shooter, if the plate resolved to one."""
+        if not gamertag:
+            return None
+        row = db.conn.execute("SELECT id FROM players WHERE gamertag = ?",
+                              (gamertag,)).fetchone()
+        return row["id"] if row else None
+
     def _log_shot(self, db, event) -> None:
         """Persist one shot, and surface it in the UI as it happens."""
         data = event.data
         try:
             db.log_event(
-                # No player_id. The banner shows for every shot in the game,
-                # not just yours, and nothing on it names the shooter — so
-                # attributing these would be inventing data, not recording it.
+                # The shooter comes from the gamertag plate that was up in
+                # the frames before the banner, not from the banner itself,
+                # which never names anyone.
                 game_id=self.game_id, kind="shot_feedback",
+                player_id=self._player_id_for(db, data.get("shooter")),
                 frame_index=event.frame_index, video_ts=event.video_ts,
                 payload=data,
             )
@@ -116,7 +125,9 @@ class WatcherThread:
             # A failed write must not take the watcher down mid-game.
             log.exception("Could not log a shot")
             return
-        parts = [p for p in (data.get("timing"), data.get("coverage")) if p]
+        shooter = data.get("shooter")
+        parts = ([shooter] if shooter else []) + [
+            p for p in (data.get("timing"), data.get("coverage")) if p]
         distance = data.get("distance_feet")
         if distance is not None:
             parts.append(f"{distance:.0f}ft")

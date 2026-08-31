@@ -10,13 +10,15 @@ from __future__ import annotations
 
 import logging
 import threading
+from collections import deque
 from dataclasses import asdict, dataclass, field
 
 import numpy as np
 
 from ..capture import FrameSource
 from ..config import Config
-from ..hud import BoxScoreParser, ScoreboardReader, ShotFeedbackReader
+from ..hud import (BoxScoreParser, NameplateReader, ScoreboardReader,
+                   ShotFeedbackReader)
 from ..state import GameState, StateMachine
 from ..state.detectors import ScreenClassifier
 from .events import Event, EventBus
@@ -28,6 +30,24 @@ log = logging.getLogger(__name__)
 # buffer without bound.
 MAX_BANNER_FRAMES = 40
 
+# Frames kept from before a shot, to find who was holding the ball.
+#
+# By the time the banner renders the ball is already in the air and the
+# shooter's plate has usually gone: measured over a real session, 22 of 60
+# banner frames carried no plate at all. So the shooter is looked for in the
+# frames leading up to the banner rather than in the banner itself.
+#
+# Only a horizontal band is kept. Plates appear over players, which across 72
+# sightings never rose above y=283 or fell below y=925, so the crowd and the
+# scoreboard can be dropped — that is a third of every frame not held in
+# memory, and a third less to search.
+SHOOTER_LOOKBACK_FRAMES = 15
+SHOOTER_BAND = (0.24, 0.88)          # fractions of frame height
+# How far back to actually look. The gap between losing the ball and the banner
+# appearing is a few frames; searching further just costs time and risks
+# naming whoever had it on the previous possession.
+SHOOTER_SEARCH_DEPTH = 6
+
 
 @dataclass
 class RunnerStats:
@@ -35,6 +55,7 @@ class RunnerStats:
     frames_sampled: int = 0
     transitions: int = 0
     shots: int = 0
+    shots_attributed: int = 0
     box_scores: int = 0
     state_frames: dict[str, int] = field(default_factory=dict)
 
@@ -67,6 +88,16 @@ class Runner:
         self._shot_reader_ready: bool | None = None
         self._box_thread: threading.Thread | None = None
         self._box_reader_ready: bool | None = None
+
+        # Recent frames, for working out who took a shot after the fact.
+        self.nameplates = NameplateReader()
+        self._recent: deque = deque(maxlen=SHOOTER_LOOKBACK_FRAMES)
+        self._plate_reader_ready: bool | None = None
+        # Who is in this game, and which of them is you. Both come from the box
+        # score, so shooters can only be named once one has been read — which
+        # is what makes the reading reliable rather than open-ended OCR.
+        self.roster: list[str] = []
+        self.me: str | None = None
 
         # How often to publish HUD crops for the UI. Encoding costs real time,
         # so this runs well below the sample rate — the crops are for a human
@@ -186,6 +217,14 @@ class Runner:
                 # say nothing than to write ten empty rows.
                 log.info("Box score parsed but no rows were readable")
                 return
+            # Hand the roster back to the loop. Naming a shooter is only
+            # reliable because the candidates are known, so this is what turns
+            # plate reading from open-ended OCR into a ten-way choice.
+            named = [p.name for p in box.players if p.name]
+            you = next((p.name for p in box.players if p.is_you), None)
+            if named:
+                self.set_roster(named, you)
+
             self.stats.box_scores += 1
             self.bus.publish(Event(
                 kind="box_score", frame_index=index, video_ts=timestamp,
@@ -231,6 +270,9 @@ class Runner:
                 self._banner.append(frame.image)
             return
 
+        # No banner: this frame is a candidate for showing the next shooter.
+        self._remember(frame)
+
         if not self._banner:
             return
         frames, self._banner = self._banner, []
@@ -244,7 +286,10 @@ class Runner:
             # gate. Silence beats a row of nulls in the database.
             return
 
+        shooter = self._find_shooter()
         self.stats.shots += 1
+        if shooter is not None:
+            self.stats.shots_attributed += 1
         self.bus.publish(Event(
             kind="shot_feedback",
             frame_index=frame.index,
@@ -253,8 +298,53 @@ class Runner:
                   "coverage": feedback.coverage,
                   "distance_feet": feedback.distance_feet,
                   "frames": len(frames),
+                  "shooter": shooter,
                   "unmatched": feedback.unmatched},
         ))
+
+    def _remember(self, frame) -> None:
+        """Keep a band of this frame, in case the next shot needs it."""
+        image = frame.image
+        if image is None or image.size == 0:
+            return
+        h = image.shape[0]
+        band = image[int(SHOOTER_BAND[0] * h):int(SHOOTER_BAND[1] * h)]
+        self._recent.append((frame.index, band.copy()))
+
+    def _find_shooter(self) -> str | None:
+        """Who was holding the ball in the frames just before the banner.
+
+        2K names two players at any moment: your own, wherever they are, and
+        whoever has the ball. So the shooter names himself — right up until he
+        releases, at which point the plate goes and the banner arrives. Reading
+        backwards from the banner is what catches him.
+
+        Deliberately not run on every frame. Finding and reading a plate costs
+        far more than the whole rest of the loop put together, so it happens
+        once per shot, over a handful of frames, and stops at the first answer.
+        """
+        if not self.roster or not self._plates_ready():
+            return None
+        for _, band in list(self._recent)[-SHOOTER_SEARCH_DEPTH:][::-1]:
+            handler = self.nameplates.ball_handler(band, self.roster, self.me)
+            if handler is not None and handler.name != self.me:
+                return handler.name
+        # Only your own plate was up, which is what the screen looks like when
+        # the ball is yours. Saying so beats saying nothing, but only once we
+        # know who you are.
+        return self.me
+
+    def _plates_ready(self) -> bool:
+        if self._plate_reader_ready is None:
+            self._plate_reader_ready = self.nameplates.available()
+            if not self._plate_reader_ready:
+                log.warning("Tesseract not found — shots will not be attributed.")
+        return self._plate_reader_ready
+
+    def set_roster(self, roster: list[str], me: str | None = None) -> None:
+        """Tell the runner who is in this game, so shooters can be named."""
+        self.roster = list(roster)
+        self.me = me
 
     def _shot_feedback_ready(self) -> bool:
         """Whether the banner reader can run at all, checked once."""
