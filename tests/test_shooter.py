@@ -116,15 +116,21 @@ def test_the_buffer_does_not_grow_without_bound():
     assert len(runner._recent) == SHOOTER_LOOKBACK_FRAMES
 
 
-def test_only_a_band_of_each_frame_is_kept():
-    """Plates live over players; the crowd and scoreboard are not worth holding."""
+def test_whole_frames_are_kept_and_the_band_is_cropped_when_searching():
+    """The buffer doubles as the clip, and a clip must show the banner.
+
+    Plates only live over players, so the search itself only looks at a band —
+    but the banner sits above that band, and a clip cropped to the plates would
+    be missing the very thing it is evidence for.
+    """
     flags = [0]
     runner, _ = build(flags, {})
     feed(runner, flags)
-    _, band = runner._recent[0]
-    expected = int(SHOOTER_BAND[1] * 1080) - int(SHOOTER_BAND[0] * 1080)
-    assert band.shape[0] == expected
-    assert band.shape[0] < 1080
+    _, kept = runner._recent[0]
+    assert kept.shape[0] == 1080, "the clip would lose the banner"
+
+    band_height = int(SHOOTER_BAND[1] * 1080) - int(SHOOTER_BAND[0] * 1080)
+    assert band_height < 1080
 
 
 # --- finding the shooter ------------------------------------------------

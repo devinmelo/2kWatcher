@@ -12,6 +12,7 @@ from __future__ import annotations
 import difflib
 import logging
 import threading
+from pathlib import Path
 
 from ..capture import open_source
 from ..config import Config
@@ -61,7 +62,8 @@ class WatcherThread:
 
     def __init__(self, config: Config, live: LiveState, db_path, *,
                  device_index: int | None = None, video_path=None,
-                 collect_dir="data/collect", collect: bool = True) -> None:
+                 collect_dir="data/collect", collect: bool = True,
+                 clip_dir="data/clips", clips: bool = True) -> None:
         self.config = config
         self.live = live
         self.db_path = db_path
@@ -71,6 +73,9 @@ class WatcherThread:
         # frame set than as a database, because every parser still unwritten
         # is blocked on nobody having seen this HUD.
         self.collector = FrameCollector(collect_dir, enabled=collect)
+        # A second of video either side of every shot. Namespaced per session
+        # once the session opens, so one run can never overwrite another's.
+        self.clip_root = Path(clip_dir) if clips else None
         # Set once games are opened and closed off the post-game screen; until
         # then shots are logged against the session with a null game.
         self.game_id: int | None = None
@@ -119,7 +124,7 @@ class WatcherThread:
                 game_id=self.game_id, kind="shot_feedback",
                 player_id=self._player_id_for(db, data.get("shooter")),
                 frame_index=event.frame_index, video_ts=event.video_ts,
-                payload=data,
+                payload=data, clip_path=data.get("clip"),
             )
         except Exception:                                # noqa: BLE001
             # A failed write must not take the watcher down mid-game.
@@ -240,8 +245,11 @@ class WatcherThread:
 
                 try:
                     with source:
+                        clip_dir = (self.clip_root / str(self.session_id)
+                                    if self.clip_root else None)
                         StoppableRunner(source, self.config, bus=bus,
-                                        stop=self._stop, live=self.live).run()
+                                        stop=self._stop, live=self.live,
+                                        clip_dir=clip_dir).run()
                     self.live.note("watcher", "Source ended")
                 finally:
                     db.end_session(self.session_id)

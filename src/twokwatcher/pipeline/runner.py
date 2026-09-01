@@ -11,8 +11,10 @@ from __future__ import annotations
 import logging
 import threading
 from collections import deque
+from pathlib import Path
 from dataclasses import asdict, dataclass, field
 
+import cv2
 import numpy as np
 
 from ..capture import FrameSource
@@ -48,6 +50,10 @@ SHOOTER_BAND = (0.24, 0.88)          # fractions of frame height
 # naming whoever had it on the previous possession.
 SHOOTER_SEARCH_DEPTH = 6
 
+# Clips play back at the rate the loop samples at, so a second of game is a
+# second of clip.
+CLIP_FPS = 10.0
+
 
 @dataclass
 class RunnerStats:
@@ -71,6 +77,7 @@ class Runner:
         bus: EventBus | None = None,
         sample_fps: float | None = None,
         preview_every: int = 5,
+        clip_dir=None,
     ) -> None:
         self.source = source
         self.config = config
@@ -98,6 +105,10 @@ class Runner:
         # is what makes the reading reliable rather than open-ended OCR.
         self.roster: list[str] = []
         self.me: str | None = None
+        # Where per-shot clips are written, or None to write none. The caller
+        # namespaces this per session — filenames alone would collide across
+        # runs, which is exactly how the frame collector loses its history.
+        self.clip_dir = clip_dir
 
         # How often to publish HUD crops for the UI. Encoding costs real time,
         # so this runs well below the sample rate — the crops are for a human
@@ -270,11 +281,11 @@ class Runner:
                 self._banner.append(frame.image)
             return
 
-        # No banner: this frame is a candidate for showing the next shooter.
-        self._remember(frame)
-
         if not self._banner:
+            # Nothing in flight, so this frame is run-up for the next shot.
+            self._remember(frame)
             return
+
         frames, self._banner = self._banner, []
         try:
             feedback = self.shot_feedback.read_event(frames)
@@ -287,6 +298,7 @@ class Runner:
             return
 
         shooter = self._find_shooter()
+        clip = self._write_clip(frames, frame.index)
         self.stats.shots += 1
         if shooter is not None:
             self.stats.shots_attributed += 1
@@ -299,17 +311,67 @@ class Runner:
                   "distance_feet": feedback.distance_feet,
                   "frames": len(frames),
                   "shooter": shooter,
+                  "clip": clip,
                   "unmatched": feedback.unmatched},
         ))
+        # This frame is past the banner, so it belongs to the next shot's
+        # run-up — not to the one just written.
+        self._recent.clear()
+        self._remember(frame)
+
+    def _write_clip(self, banner_frames, index: int) -> str | None:
+        """Save the second before a shot, and the banner that ended it.
+
+        The lookback the shooter search uses is also, for free, a recording of
+        the shot that produced it — so it is worth keeping. The banner frames
+        follow the run-up, which makes a clip that shows the release and then
+        the verdict on it, and that is what makes a logged shot checkable by a
+        human rather than merely plausible.
+
+        Written on a worker thread. Encoding a second of 1080p costs about
+        290ms, which is nothing once per shot but far too much inside a loop
+        with a 100ms budget per frame.
+        """
+        if self.clip_dir is None:
+            return None
+        frames = [image for _, image in self._recent] + list(banner_frames)
+        if not frames:
+            return None
+
+        directory = Path(self.clip_dir)
+        path = directory / f"shot-{index:07d}.mp4"
+
+        def work() -> None:
+            try:
+                directory.mkdir(parents=True, exist_ok=True)
+                height, width = frames[0].shape[:2]
+                writer = cv2.VideoWriter(
+                    str(path), cv2.VideoWriter_fourcc(*"mp4v"),
+                    CLIP_FPS, (width, height))
+                try:
+                    for image in frames:
+                        if image.shape[:2] == (height, width):
+                            writer.write(image)
+                finally:
+                    writer.release()
+            except Exception:                               # noqa: BLE001
+                log.exception("Could not write the clip for shot %s", index)
+
+        threading.Thread(target=work, daemon=True, name="clip").start()
+        return str(path)
 
     def _remember(self, frame) -> None:
-        """Keep a band of this frame, in case the next shot needs it."""
+        """Keep this frame, in case the next shot needs it.
+
+        Whole frames, not the plate band. The band is all the shooter search
+        needs, but a clip of a shot has to show the banner too, and that sits
+        above the band — a clip cropped to the plates would be missing the very
+        thing it is evidence for.
+        """
         image = frame.image
         if image is None or image.size == 0:
             return
-        h = image.shape[0]
-        band = image[int(SHOOTER_BAND[0] * h):int(SHOOTER_BAND[1] * h)]
-        self._recent.append((frame.index, band.copy()))
+        self._recent.append((frame.index, image.copy()))
 
     def _find_shooter(self) -> str | None:
         """Who was holding the ball in the frames just before the banner.
@@ -325,7 +387,9 @@ class Runner:
         """
         if not self.roster or not self._plates_ready():
             return None
-        for _, band in list(self._recent)[-SHOOTER_SEARCH_DEPTH:][::-1]:
+        for _, image in list(self._recent)[-SHOOTER_SEARCH_DEPTH:][::-1]:
+            h = image.shape[0]
+            band = image[int(SHOOTER_BAND[0] * h):int(SHOOTER_BAND[1] * h)]
             handler = self.nameplates.ball_handler(band, self.roster, self.me)
             if handler is not None and handler.name != self.me:
                 return handler.name

@@ -28,7 +28,25 @@ class Database:
         self.conn = sqlite3.connect(self.path)
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(SCHEMA_PATH.read_text())
+        self._migrate()
         self.conn.commit()
+
+    def _migrate(self) -> None:
+        """Bring an existing database up to the current schema.
+
+        schema.sql is all CREATE TABLE IF NOT EXISTS, which does nothing to a
+        table that already exists — so a column added there never reaches a
+        database with data in it. These fill that gap, and each is a no-op once
+        applied.
+        """
+        for table, column, decl in (
+            ("events", "clip_path", "TEXT"),
+        ):
+            existing = {row[1] for row in
+                        self.conn.execute(f"PRAGMA table_info({table})")}
+            if column not in existing:
+                self.conn.execute(
+                    f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
 
     def close(self) -> None:
         self.conn.close()
@@ -201,13 +219,14 @@ class Database:
         self, *, game_id: int | None, kind: str, frame_index: int | None = None,
         video_ts: float | None = None, player_id: int | None = None,
         quarter: int | None = None, game_clock: str | None = None,
-        payload: dict[str, Any] | None = None,
+        payload: dict[str, Any] | None = None, clip_path: str | None = None,
     ) -> int:
         cur = self.conn.execute(
             "INSERT INTO events (game_id, player_id, frame_index, video_ts,"
-            " quarter, game_clock, kind, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            " quarter, game_clock, kind, payload, clip_path)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (game_id, player_id, frame_index, video_ts, quarter, game_clock,
-             kind, json.dumps(payload) if payload else None),
+             kind, json.dumps(payload) if payload else None, clip_path),
         )
         self.conn.commit()
         return cur.lastrowid
