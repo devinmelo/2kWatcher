@@ -163,3 +163,18 @@ def test_a_genuinely_different_name_is_not_merged():
     from twokwatcher.app.watcher import _closest_known
     assert _closest_known("TotallyDifferent", ["Juju Watkin5"]) == "TotallyDifferent"
     assert _closest_known("njsimas456", ["Juju Watkin5", "Lil Knotty"]) == "njsimas456"
+
+
+def test_unreadable_name_cells_do_not_become_players(watcher):
+    """A live session put "a", "q", "nn" and "i a" on the roster."""
+    from twokwatcher.app.watcher import _is_plausible_gamertag
+
+    event = a_box_score()
+    for i, junk in enumerate(["a", "q", "nn", "i a"], start=6):
+        event.data["players"][i]["name"] = junk
+    watcher._log_box_score(event)
+
+    with Database(watcher.db_path) as db:
+        tags = [r["gamertag"] for r in db.roster()]
+        assert not ({"a", "q", "nn", "i a"} & set(tags))
+        assert "Lil Knotty" in tags

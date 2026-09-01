@@ -160,13 +160,17 @@ def test_only_your_plate_showing_means_the_shot_was_yours():
 
 
 def test_the_search_does_not_run_past_its_depth():
-    """Looking too far back names whoever had it on the previous possession."""
+    """Looking too far back names whoever had it on the previous possession.
+
+    The handler here sits outside the window, so it must not be reached — and
+    with nothing readable inside it, no shooter is claimed at all.
+    """
     flags = [0] * 12 + [1, 0]
     by_tag = {0: "IIMarrll"}          # only the oldest frame has a handler
     runner, seen = build(flags, by_tag)
     feed(runner, flags)
     assert len(runner.nameplates.calls) <= SHOOTER_SEARCH_DEPTH
-    assert seen[0].data["shooter"] == ME
+    assert seen[0].data["shooter"] is None
 
 
 def test_no_roster_means_no_shooter():
@@ -191,3 +195,23 @@ def test_the_roster_arrives_from_the_box_score():
     runner.set_roster(["a", "b"], "a")
     assert runner.roster == ["a", "b"]
     assert runner.me == "a"
+
+
+def test_no_plate_at_all_is_not_a_shot_of_yours():
+    """Reading nothing is not evidence the ball was yours.
+
+    Conflating "only your plate was up" with "no plate was readable" credited
+    the capture's owner with 22 shots against 12 attempts in the box score.
+    """
+    flags = [0, 0, 1, 0]
+    runner, seen = build(flags, {})          # no handler on any frame
+    feed(runner, flags)
+    assert seen[0].data["shooter"] is None
+    assert runner.stats.shots_attributed == 0
+
+
+def test_your_plate_and_nobody_elses_is_still_your_shot():
+    flags = [0, 0, 1, 0]
+    runner, seen = build(flags, {0: ME, 1: ME})
+    feed(runner, flags)
+    assert seen[0].data["shooter"] == ME

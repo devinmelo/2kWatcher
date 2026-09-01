@@ -29,6 +29,22 @@ log = logging.getLogger(__name__)
 NAME_MATCH_RATIO = 0.82
 
 
+# The shortest real gamertag is a few characters; anything below this came
+# from a cell OCR could not read. A live session put "a", "q", "nn" and "i a"
+# on the roster as players in their own right.
+MIN_GAMERTAG = 3
+
+
+def _is_plausible_gamertag(name) -> bool:
+    """Whether a reading looks like a gamertag rather than OCR debris."""
+    if not name:
+        return False
+    cleaned = name.strip()
+    return (len(cleaned) >= MIN_GAMERTAG
+            and any(c.isalnum() for c in cleaned)
+            and sum(c.isalnum() for c in cleaned) >= MIN_GAMERTAG)
+
+
 def _closest_known(name, known):
     """The registry spelling of a gamertag, if it is already on record."""
     if not name or not known or name in known:
@@ -152,7 +168,8 @@ class WatcherThread:
         screen is too expensive to read for anything it yielded to be discarded.
         """
         data = event.data
-        players = [p for p in data.get("players", []) if p.get("name")]
+        players = [p for p in data.get("players", [])
+                   if _is_plausible_gamertag(p.get("name"))]
         if not players:
             return
         try:

@@ -387,16 +387,24 @@ class Runner:
         """
         if not self.roster or not self._plates_ready():
             return None
+
+        saw_your_plate = False
         for _, image in list(self._recent)[-SHOOTER_SEARCH_DEPTH:][::-1]:
             h = image.shape[0]
             band = image[int(SHOOTER_BAND[0] * h):int(SHOOTER_BAND[1] * h)]
             handler = self.nameplates.ball_handler(band, self.roster, self.me)
-            if handler is not None and handler.name != self.me:
+            if handler is None:
+                continue
+            if handler.name != self.me:
                 return handler.name
-        # Only your own plate was up, which is what the screen looks like when
-        # the ball is yours. Saying so beats saying nothing, but only once we
-        # know who you are.
-        return self.me
+            saw_your_plate = True
+
+        # Your plate up and nobody else's is what the screen looks like when
+        # the ball is yours, so that is an answer. Reading no plate at all is
+        # not: it means the run-up was unreadable, and claiming it anyway was
+        # crediting you with shots you never took — 22 attributed against 12
+        # attempts in the box score, because the two cases were conflated.
+        return self.me if saw_your_plate else None
 
     def _plates_ready(self) -> bool:
         if self._plate_reader_ready is None:
