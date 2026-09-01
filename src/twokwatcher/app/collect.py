@@ -31,18 +31,23 @@ log = logging.getLogger(__name__)
 # Per-state caps. Post-game screens earn a bigger budget: they are the densest
 # structured data in the game and vary most between modes.
 DEFAULT_CAPS = {
-    "live": 25,
-    "post_game": 30,
-    "dead_ball": 10,
-    "menu": 8,
-    "replay": 6,
-    "loading": 3,
-    "unknown": 3,
+    "live": 400,
+    "post_game": 60,
+    "dead_ball": 150,
+    "menu": 40,
+    "replay": 60,
+    "loading": 10,
+    "unknown": 20,
 }
 
 # Minimum seconds between saves within one state, so a session yields a spread
 # of situations rather than thirty near-identical frames from one possession.
-MIN_INTERVAL = 4.0
+#
+# Kept low because the parsers now being built read things that come and go in
+# under a second — the gamertag plate over whoever has the ball, and the shot
+# banner it has to be matched against. At four seconds apart those were never
+# both in frame, which is precisely the measurement that could not be made.
+MIN_INTERVAL = 1.0
 
 
 class FrameCollector:

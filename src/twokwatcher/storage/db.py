@@ -28,7 +28,25 @@ class Database:
         self.conn = sqlite3.connect(self.path)
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(SCHEMA_PATH.read_text())
+        self._migrate()
         self.conn.commit()
+
+    def _migrate(self) -> None:
+        """Bring an existing database up to the current schema.
+
+        schema.sql is all CREATE TABLE IF NOT EXISTS, which does nothing to a
+        table that already exists — so a column added there never reaches a
+        database with data in it. These fill that gap, and each is a no-op once
+        applied.
+        """
+        for table, column, decl in (
+            ("events", "clip_path", "TEXT"),
+        ):
+            existing = {row[1] for row in
+                        self.conn.execute(f"PRAGMA table_info({table})")}
+            if column not in existing:
+                self.conn.execute(
+                    f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
 
     def close(self) -> None:
         self.conn.close()
@@ -85,6 +103,29 @@ class Database:
         ).fetchone()
         return row["id"]
 
+    def me(self) -> sqlite3.Row | None:
+        """The player this capture belongs to, if one has been identified."""
+        return self.conn.execute(
+            "SELECT * FROM players WHERE is_me = 1 ORDER BY last_seen DESC"
+        ).fetchone()
+
+    def shots(self, player_id: int | None = None,
+              limit: int = 200) -> list[sqlite3.Row]:
+        """Logged shots, newest first, optionally for one player."""
+        if player_id is None:
+            return self.conn.execute(
+                "SELECT e.*, p.gamertag FROM events e"
+                " LEFT JOIN players p ON p.id = e.player_id"
+                " WHERE e.kind = 'shot_feedback'"
+                " ORDER BY e.id DESC LIMIT ?", (limit,),
+            ).fetchall()
+        return self.conn.execute(
+            "SELECT e.*, p.gamertag FROM events e"
+            " LEFT JOIN players p ON p.id = e.player_id"
+            " WHERE e.kind = 'shot_feedback' AND e.player_id = ?"
+            " ORDER BY e.id DESC LIMIT ?", (player_id, limit),
+        ).fetchall()
+
     def roster(self) -> list[sqlite3.Row]:
         return self.conn.execute(
             "SELECT * FROM players ORDER BY is_me DESC, is_friend DESC, gamertag"
@@ -118,19 +159,74 @@ class Database:
         )
         self.conn.commit()
 
+    def record_stat_line(
+        self, *, game_id: int, player_id: int, team: str, grade: str | None = None,
+        pts: int | None = None, reb: int | None = None, ast: int | None = None,
+        stl: int | None = None, blk: int | None = None, tov: int | None = None,
+        fgm: int | None = None, fga: int | None = None,
+        tpm: int | None = None, tpa: int | None = None,
+        ftm: int | None = None, fta: int | None = None,
+    ) -> None:
+        """Write one player's line for a game, replacing any earlier one.
+
+        The box score can be read more than once — 2K lets you open it mid-game
+        — so this upserts rather than inserts. A later read supersedes an
+        earlier one, but only field by field: a cell the parser declined this
+        time must not wipe a value it managed to read before.
+
+        FOULS has no column here. The full parse is kept as JSON on the
+        matching event, so nothing is lost, but the normalized table holds only
+        what the schema was built for.
+        """
+        self.conn.execute(
+            """
+            INSERT INTO game_players (game_id, player_id, team, grade, pts, reb,
+                                      ast, stl, blk, tov, fgm, fga, tpm, tpa,
+                                      ftm, fta)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(game_id, player_id) DO UPDATE SET
+                team  = excluded.team,
+                grade = COALESCE(excluded.grade, game_players.grade),
+                pts   = COALESCE(excluded.pts,   game_players.pts),
+                reb   = COALESCE(excluded.reb,   game_players.reb),
+                ast   = COALESCE(excluded.ast,   game_players.ast),
+                stl   = COALESCE(excluded.stl,   game_players.stl),
+                blk   = COALESCE(excluded.blk,   game_players.blk),
+                tov   = COALESCE(excluded.tov,   game_players.tov),
+                fgm   = COALESCE(excluded.fgm,   game_players.fgm),
+                fga   = COALESCE(excluded.fga,   game_players.fga),
+                tpm   = COALESCE(excluded.tpm,   game_players.tpm),
+                tpa   = COALESCE(excluded.tpa,   game_players.tpa),
+                ftm   = COALESCE(excluded.ftm,   game_players.ftm),
+                fta   = COALESCE(excluded.fta,   game_players.fta)
+            """,
+            (game_id, player_id, team, grade, pts, reb, ast, stl, blk, tov,
+             fgm, fga, tpm, tpa, ftm, fta),
+        )
+        self.conn.commit()
+
+    def stat_lines(self, game_id: int) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            "SELECT gp.*, p.gamertag FROM game_players gp"
+            " JOIN players p ON p.id = gp.player_id"
+            " WHERE gp.game_id = ? ORDER BY gp.team DESC, gp.pts DESC",
+            (game_id,),
+        ).fetchall()
+
     # --- events and logging ---------------------------------------------
 
     def log_event(
         self, *, game_id: int | None, kind: str, frame_index: int | None = None,
         video_ts: float | None = None, player_id: int | None = None,
         quarter: int | None = None, game_clock: str | None = None,
-        payload: dict[str, Any] | None = None,
+        payload: dict[str, Any] | None = None, clip_path: str | None = None,
     ) -> int:
         cur = self.conn.execute(
             "INSERT INTO events (game_id, player_id, frame_index, video_ts,"
-            " quarter, game_clock, kind, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            " quarter, game_clock, kind, payload, clip_path)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (game_id, player_id, frame_index, video_ts, quarter, game_clock,
-             kind, json.dumps(payload) if payload else None),
+             kind, json.dumps(payload) if payload else None, clip_path),
         )
         self.conn.commit()
         return cur.lastrowid
